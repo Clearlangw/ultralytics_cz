@@ -141,7 +141,7 @@ class Detect(nn.Module):
         bs = x[0].shape[0]  # batch size
         boxes = torch.cat([box_head[i](x[i]).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1)
         scores = torch.cat([cls_head[i](x[i]).view(bs, self.nc, -1) for i in range(self.nl)], dim=-1)
-        return dict(boxes=boxes, scores=scores, feats=x)
+        return dict(boxes=boxes, scores=scores, feats=x) #输出字典
 
     def forward(
         self, x: list[torch.Tensor]
@@ -157,7 +157,7 @@ class Detect(nn.Module):
         y = self._inference(preds["one2one"] if self.end2end else preds)
         if self.end2end:
             y = self.postprocess(y.permute(0, 2, 1))
-        return y if self.export else (y, preds)
+        return y if self.export else (y, preds) #得到tuple，y是result，preds是输出字典
 
     def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Decode predicted bounding boxes and class probabilities based on multiple-level feature maps.
@@ -170,7 +170,8 @@ class Detect(nn.Module):
         """
         # Inference path
         dbox = self._get_decode_boxes(x)
-        return torch.cat((dbox, x["scores"].sigmoid()), 1)
+        result = torch.cat((dbox, x["scores"].sigmoid()), 1)
+        return result
 
     def _get_decode_boxes(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Get decoded boxes based on anchors and strides."""
@@ -321,6 +322,7 @@ class Segment(Detect):
     def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Decode predicted bounding boxes and class probabilities, concatenated with mask coefficients."""
         preds = super()._inference(x)
+        # 输出 bbox + cls + 属性分数 + mask
         return torch.cat([preds, x["mask_coefficient"]], dim=1)
 
     def forward_head(
@@ -1028,6 +1030,11 @@ class YOLOEDetect(Detect):
         self.reprta = Residual(SwiGLUFFN(embed, embed))
         self.savpe = SAVPE(ch, c3, embed)
         self.embed = embed
+        
+        # Attribute branch (Phase 2) - initialized on demand via add_attr_branch
+        self.cv_attr = nn.ModuleList()  # attribute visual feature extraction
+        self.attr_head = nn.ModuleList()  # attribute contrastive head
+        self.reprta_attr = None  # attribute text embedding refiner (initialized on demand)
 
     @smart_inference_mode()
     def fuse(self, txt_feats: torch.Tensor = None):
@@ -1088,6 +1095,24 @@ class YOLOEDetect(Detect):
         """Get text prompt embeddings with normalization."""
         return None if tpe is None else F.normalize(self.reprta(tpe), dim=-1, p=2)
 
+    def _init_attr_branch(self):
+        """Initialize attribute branch by deepcopying from text branch (Phase 2)."""
+        if len(self.cv_attr) > 0:
+            return  # Already initialized
+        
+        self.cv_attr = copy.deepcopy(self.cv3)
+        self.attr_head = copy.deepcopy(self.cv4)
+        self.reprta_attr = copy.deepcopy(self.reprta)
+
+    def get_attr_pe(self, ape: torch.Tensor | None) -> torch.Tensor | None:
+        """Get attribute prompt embeddings with normalization."""
+        if ape is None or self.reprta_attr is None:
+            return None
+        # print('ape.shape !!!!!!!!!!!!!!',ape.shape[-2])
+        # import sys
+        # sys.exit()
+        return F.normalize(self.reprta_attr(ape), dim=-1, p=2)
+
     def get_vpe(self, x: list[torch.Tensor], vpe: torch.Tensor) -> torch.Tensor:
         """Get visual prompt embeddings with spatial awareness."""
         if vpe.shape[1] == 0:  # no visual prompt embeddings
@@ -1102,6 +1127,23 @@ class YOLOEDetect(Detect):
         if hasattr(self, "lrpc"):  # for prompt-free inference
             return self.forward_lrpc(x[:3])
         return super().forward(x)
+
+    def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Decode predicted bounding boxes and class probabilities based on multiple-level feature maps.
+
+        Args:
+            x (dict[str, torch.Tensor]): Dictionary of predictions from detection layers.
+
+        Returns:
+            (torch.Tensor): Concatenated tensor of decoded bounding boxes and class probabilities.
+        """
+        # Inference path
+        dbox = self._get_decode_boxes(x)
+        result = torch.cat((dbox, x["scores"].sigmoid()), 1)
+        if "attr_scores" in x:
+            result = torch.cat((result, x["attr_scores"].sigmoid()), 1)
+
+        return result
 
     def forward_lrpc(self, x: list[torch.Tensor]) -> torch.Tensor | tuple:
         """Process features with fused text embeddings to generate detections for prompt-free model."""
@@ -1146,9 +1188,18 @@ class YOLOEDetect(Detect):
 
     def forward_head(self, x, box_head, cls_head, contrastive_head):
         """Concatenates and returns predicted bounding boxes, class probabilities, and contrastive scores."""
-        assert len(x) == 4, f"Expected 4 features including 3 feature maps and 1 text embeddings, but got {len(x)}."
+        # Support both standard (4 inputs) and extended (5 inputs with attribute embeddings) modes
+        has_attr = len(x) == 5
+        if has_attr:
+            assert len(x) == 5, f"Expected 4 or 5 features, but got {len(x)}."
+            ape = x[-1]  # attribute prompt embeddings
+            x = x[:-1]  # remove ape from x for standard processing
+        else:
+            assert len(x) == 4, f"Expected 4 features including 3 feature maps and 1 text embeddings, but got {len(x)}."
+        
         if box_head is None or cls_head is None:  # for fused inference
             return dict()
+        
         bs = x[0].shape[0]  # batch size
         boxes = torch.cat([box_head[i](x[i]).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1)
         self.nc = x[-1].shape[1]
@@ -1156,7 +1207,20 @@ class YOLOEDetect(Detect):
             [contrastive_head[i](cls_head[i](x[i]), x[-1]).reshape(bs, self.nc, -1) for i in range(self.nl)], dim=-1
         )
         self.no = self.nc + self.reg_max * 4  # self.nc could be changed when inference with different texts
-        return dict(boxes=boxes, scores=scores, feats=x[:3])
+        
+        result = dict(boxes=boxes, scores=scores, feats=x[:3])
+        
+        # Process attribute branch if enabled (Phase 2)
+        if has_attr and len(self.cv_attr) > 0:
+            ape_normalized = self.get_attr_pe(ape)
+            attr_scores = torch.cat(
+                [self.attr_head[i](self.cv_attr[i](x[i]), ape_normalized).reshape(bs, ape.shape[1], -1) for i in range(self.nl)], 
+                dim=-1
+            )
+            result['attr_scores'] = attr_scores
+            result['na'] = ape.shape[1]  # 修改：使用 ape.shape[1] 而不是 x["attr_scores"]
+        return result
+
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
@@ -1281,6 +1345,7 @@ class YOLOESegment(YOLOEDetect):
 
     def forward(self, x: list[torch.Tensor]) -> tuple | list[torch.Tensor] | dict[str, torch.Tensor]:
         """Return model outputs and mask coefficients if training, otherwise return outputs and mask coefficients."""
+        # forward得到一个
         outputs = super().forward(x)
         preds = outputs[1] if isinstance(outputs, tuple) else outputs
         proto = self.proto(x[0])  # mask protos

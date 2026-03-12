@@ -1053,6 +1053,38 @@ class YOLOEModel(DetectionModel):
         return head.get_tpe(txt_feats)  # run auxiliary text head
 
     @smart_inference_mode()
+    def get_attr_pe(self, attrs, batch=80, cache_clip_model=False):
+        """Get attribute prompt embeddings using the CLIP model (Phase 2).
+
+        Args:
+            attrs (list[str]): List of attribute names.
+            batch (int): Batch size for processing text tokens.
+            cache_clip_model (bool): Whether to cache the CLIP model.
+
+        Returns:
+            (torch.Tensor): Attribute positional embeddings [1, N_attr, 512].
+        """
+        from ultralytics.nn.text_model import build_text_model
+
+        device = next(self.model.parameters()).device
+        if not getattr(self, "clip_model", None) and cache_clip_model:
+            self.clip_model = build_text_model(getattr(self, "text_model", "mobileclip:blt"), device=device)
+
+        model = (
+            self.clip_model
+            if cache_clip_model
+            else build_text_model(getattr(self, "text_model", "mobileclip:blt"), device=device)
+        )
+        text_token = model.tokenize(attrs)
+        attr_feats = [model.encode_text(token).detach() for token in text_token.split(batch)]
+        attr_feats = attr_feats[0] if len(attr_feats) == 1 else torch.cat(attr_feats, dim=0)
+        attr_feats = attr_feats.reshape(-1, len(attrs), attr_feats.shape[-1])
+
+        head = self.model[-1]
+        assert isinstance(head, YOLOEDetect)
+        return head.get_attr_pe(attr_feats)  # run attribute text head
+
+    @smart_inference_mode()
     def get_visual_pe(self, img, visual):
         """Get visual positional embeddings.
 
@@ -1136,6 +1168,25 @@ class YOLOEModel(DetectionModel):
         self.model[-1].nc = len(names)
         self.names = check_class_names(names)
 
+    def add_attr_branch(self, na: int = 0):
+        """Add attribute branch to the model (Phase 2).
+        
+        Args:
+            na (int): Unused, kept for API compatibility. Attribute dimension is dynamic.
+        """
+        head = self.model[-1]
+        assert isinstance(head, YOLOEDetect), "Attribute branch only supported for YOLOEDetect"
+        
+        # Ensure attributes exist (for models loaded before this feature was added)
+        if not hasattr(head, 'cv_attr'):
+            head.cv_attr = nn.ModuleList()
+        if not hasattr(head, 'attr_head'):
+            head.attr_head = nn.ModuleList()
+        if not hasattr(head, 'reprta_attr'):
+            head.reprta_attr = None
+        
+        head._init_attr_branch()
+
     def get_cls_pe(self, tpe, vpe):
         """Get class positional embeddings.
 
@@ -1158,7 +1209,7 @@ class YOLOEModel(DetectionModel):
         return torch.cat(all_pe, dim=1)
 
     def predict(
-        self, x, profile=False, visualize=False, tpe=None, augment=False, embed=None, vpe=None, return_vpe=False
+        self, x, profile=False, visualize=False, tpe=None, augment=False, embed=None, vpe=None, return_vpe=False, ape=None
     ):
         """Perform a forward pass through the model.
 
@@ -1171,6 +1222,7 @@ class YOLOEModel(DetectionModel):
             embed (list, optional): A list of layer indices to return embeddings from.
             vpe (torch.Tensor, optional): Visual positional embeddings.
             return_vpe (bool): If True, return visual positional embeddings.
+            ape (torch.Tensor, optional): Attribute positional embeddings (Phase 3).
 
         Returns:
             (torch.Tensor): Model's output tensor.
@@ -1194,6 +1246,13 @@ class YOLOEModel(DetectionModel):
                 if cls_pe.shape[0] != b or m.export:
                     cls_pe = cls_pe.expand(b, -1, -1)
                 x.append(cls_pe)  # adding cls embedding
+                
+                # Add attribute embeddings if provided (Phase 3)
+                if ape is not None and len(m.cv_attr) > 0:
+                    ape_dev = ape.to(device=x[0].device, dtype=x[0].dtype)
+                    if ape_dev.shape[0] != b or m.export:
+                        ape_dev = ape_dev.expand(b, -1, -1)
+                    x.append(ape_dev)  # adding attr embedding
             x = m(x)  # run
 
             y.append(x if m.i in self.save else None)  # save output

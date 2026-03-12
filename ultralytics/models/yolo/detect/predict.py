@@ -51,6 +51,13 @@ class DetectionPredictor(BasePredictor):
             >>> processed_results = predictor.postprocess(preds, img, orig_imgs)
         """
         save_feats = getattr(self, "_feats", None) is not None
+        na = kwargs.get('na', 0)
+        # print(preds)
+        # print(preds[0].shape)
+        # print(preds[1].shape)
+        # print(len(self.model.names))
+        # import sys
+        # sys.exit()
         preds = nms.non_max_suppression(
             preds,
             self.args.conf,
@@ -62,6 +69,7 @@ class DetectionPredictor(BasePredictor):
             end2end=getattr(self.model, "end2end", False),
             rotated=self.args.task == "obb",
             return_idxs=save_feats,
+            na=na,  # 传入属性数量 (Phase 3)
         )
 
         if not isinstance(orig_imgs, list):  # input images are a torch.Tensor, not a list
@@ -90,17 +98,19 @@ class DetectionPredictor(BasePredictor):
         )  # mean reduce all vectors to same length
         return [feats[idx] if idx.shape[0] else [] for feats, idx in zip(obj_feats, idxs)]  # for each img in batch
 
-    def construct_results(self, preds, img, orig_imgs):
+    def construct_results(self, preds, img, orig_imgs, **kwargs):
         """Construct a list of Results objects from model predictions.
 
         Args:
             preds (list[torch.Tensor]): List of predicted bounding boxes and scores for each image.
             img (torch.Tensor): Batch of preprocessed images used for inference.
             orig_imgs (list[np.ndarray]): List of original images before preprocessing.
+            **kwargs (Any): Additional keyword arguments including na (number of attributes).
 
         Returns:
             (list[Results]): List of Results objects containing detection information for each image.
         """
+        na = kwargs.get('na', 0)
         return [
             self.construct_result(pred, img, orig_img, img_path)
             for pred, orig_img, img_path in zip(preds, orig_imgs, self.batch[0])
@@ -119,4 +129,12 @@ class DetectionPredictor(BasePredictor):
             (Results): Results object containing the original image, image path, class names, and scaled bounding boxes.
         """
         pred[:, :4] = ops.scale_boxes(img.shape[2:], pred[:, :4], orig_img.shape)
-        return Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6])
+        
+        # Extract attribute scores if present (Phase 3)
+        attr_scores = None
+        if pred.shape[1] > 6:
+            # Attribute scores are appended after standard detection outputs
+            attr_scores = pred[:, 6:]
+            pred = pred[:, :6]
+        
+        return Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], attr_scores=attr_scores)

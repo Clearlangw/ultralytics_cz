@@ -179,6 +179,17 @@ class BasePredictor:
             if self.args.visualize and (not self.source_type.tensor)
             else False
         )
+        # Pass attribute embeddings if available (Phase 3)
+        # Check both model and parent model for _attr_pe
+        ape = None
+        if hasattr(self.model, '_attr_pe'):
+            ape = self.model._attr_pe
+        elif hasattr(self.model, 'model') and hasattr(self.model.model, '_attr_pe'):
+            ape = self.model.model._attr_pe
+        
+        if ape is not None:
+            kwargs['ape'] = ape
+            
         return self.model(im, augment=self.args.augment, visualize=visualize, embed=self.args.embed, *args, **kwargs)
 
     def pre_transform(self, im: list[np.ndarray]) -> list[np.ndarray]:

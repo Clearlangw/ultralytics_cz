@@ -60,10 +60,22 @@ class SegmentationPredictor(DetectionPredictor):
             >>> results = predictor.postprocess(preds, img, orig_img)
         """
         # Extract protos - tuple if PyTorch model or array if exported
+        # print(type(preds))
+        # print(type(preds[0]))
+        # import sys
+        # sys.exit()
+        # 来自forward的输出得到tuple，y是_inference得到的张量，preds是forward_head的输出字典
         protos = preds[0][1] if isinstance(preds[0], tuple) else preds[1]
-        return super().postprocess(preds[0], img, orig_imgs, protos=protos)
+        # 新增：提取属性分数和属性数量
+        preds_dict = preds[1] if isinstance(preds[0], tuple) else preds[0]
+        #attr_scores = preds_dict.get('attr_scores', None)  # shape: (batch, na, num_boxes)
+        na = preds_dict.get('na', 0)  # 属性数量
 
-    def construct_results(self, preds, img, orig_imgs, protos):
+        # 调用父类 postprocess，并传入属性信息
+        return super().postprocess(preds[0], img, orig_imgs, protos=protos, na=na)
+
+
+    def construct_results(self, preds, img, orig_imgs, protos, na=0):
         """Construct a list of result objects from the predictions.
 
         Args:
@@ -71,17 +83,18 @@ class SegmentationPredictor(DetectionPredictor):
             img (torch.Tensor): The image after preprocessing.
             orig_imgs (list[np.ndarray]): List of original images before preprocessing.
             protos (torch.Tensor): Prototype masks tensor with shape (B, C, H, W).
+            na (int): Number of attributes (Phase 3).
 
         Returns:
             (list[Results]): List of result objects containing the original images, image paths, class names, bounding
                 boxes, and masks.
         """
         return [
-            self.construct_result(pred, img, orig_img, img_path, proto)
+            self.construct_result(pred, img, orig_img, img_path, proto, na=na)
             for pred, orig_img, img_path, proto in zip(preds, orig_imgs, self.batch[0], protos)
         ]
 
-    def construct_result(self, pred, img, orig_img, img_path, proto):
+    def construct_result(self, pred, img, orig_img, img_path, proto, na=0):
         """Construct a single result object from the prediction.
 
         Args:
@@ -90,10 +103,24 @@ class SegmentationPredictor(DetectionPredictor):
             orig_img (np.ndarray): The original image before preprocessing.
             img_path (str): The path to the original image.
             proto (torch.Tensor): The prototype masks.
+            na (int): Number of attributes (Phase 3).
 
         Returns:
             (Results): Result object containing the original image, image path, class names, bounding boxes, and masks.
         """
+        # Extract attribute scores if present (Phase 3)
+        # NMS 输出格式：boxes(4) + scores(1) + class(1) + attr_scores(na) + mask_coeff(nm)
+        attr_scores = None
+        nm = proto.shape[1] if proto is not None else 0
+        
+        if pred.shape[0] > 0 and na > 0:
+            # 属性分数在位置 [6:6+na]
+            attr_scores = pred[:, 6:6+na]
+            # 重新组织 pred：只保留 boxes + scores + class + mask_coeff
+            # 需要将 mask_coeff 从 [6+na:] 移到 [6:]
+            import torch
+            pred = torch.cat([pred[:, :6], pred[:, 6+na:]], dim=1)
+        
         if pred.shape[0] == 0:  # save empty boxes
             masks = None
         elif self.args.retina_masks:
@@ -106,4 +133,6 @@ class SegmentationPredictor(DetectionPredictor):
             keep = masks.amax((-2, -1)) > 0  # only keep predictions with masks
             if not all(keep):  # most predictions have masks
                 pred, masks = pred[keep], masks[keep]  # indexing is slow
-        return Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], masks=masks)
+                if attr_scores is not None:
+                    attr_scores = attr_scores[keep]
+        return Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], masks=masks, attr_scores=attr_scores)

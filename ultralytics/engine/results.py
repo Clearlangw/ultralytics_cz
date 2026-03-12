@@ -231,6 +231,7 @@ class Results(SimpleClass, DataExportMixin):
         keypoints: torch.Tensor | None = None,
         obb: torch.Tensor | None = None,
         speed: dict[str, float] | None = None,
+        attr_scores: torch.Tensor | None = None,
     ) -> None:
         """Initialize the Results class for storing and manipulating inference results.
 
@@ -244,6 +245,7 @@ class Results(SimpleClass, DataExportMixin):
             keypoints (torch.Tensor | None): A 2D tensor of keypoint coordinates for each detection.
             obb (torch.Tensor | None): A 2D tensor of oriented bounding box coordinates for each detection.
             speed (dict | None): A dictionary containing preprocess, inference, and postprocess speeds (ms/image).
+            attr_scores (torch.Tensor | None): A 2D tensor of attribute scores for each detection (Phase 3).
 
         Notes:
             For the default pose model, keypoint indices for human body pose estimation are:
@@ -259,6 +261,7 @@ class Results(SimpleClass, DataExportMixin):
         self.probs = Probs(probs) if probs is not None else None
         self.keypoints = Keypoints(keypoints, self.orig_shape) if keypoints is not None else None
         self.obb = OBB(obb, self.orig_shape) if obb is not None else None
+        self.attr_scores = attr_scores  # attribute scores [N_det, N_attr] (Phase 3)
         self.speed = speed if speed is not None else {"preprocess": None, "inference": None, "postprocess": None}
         self.names = names
         self.path = path
@@ -748,6 +751,27 @@ class Results(SimpleClass, DataExportMixin):
                 file=Path(save_dir) / self.names[int(d.cls)] / Path(file_name).with_suffix(".jpg"),
                 BGR=True,
             )
+
+    def describe(self, attrs: list[str], attr_thres: float = 0.4) -> list[str]:
+        """Generate attribute descriptions for detections (Phase 3).
+        
+        Args:
+            attrs (list[str]): List of attribute names.
+            attr_thres (float): Threshold for attribute scores to be included in description.
+        
+        Returns:
+            (list[str]): List of attribute descriptions for each detection.
+        """
+        if self.attr_scores is None:
+            return []
+        
+        descriptions = []
+        for i in range(len(self.attr_scores)):
+            attr_score = self.attr_scores[i]  # [N_attr]
+            active_attrs = [attrs[j] for j in range(len(attrs)) if attr_score[j] > attr_thres]
+            descriptions.append(" ".join(active_attrs) if active_attrs else "")
+        
+        return descriptions
 
     def summary(self, normalize: bool = False, decimals: int = 5) -> list[dict[str, Any]]:
         """Convert inference results to a summarized dictionary with optional normalization for box coordinates.

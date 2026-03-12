@@ -26,6 +26,7 @@ def non_max_suppression(
     rotated: bool = False,
     end2end: bool = False,
     return_idxs: bool = False,
+    na: int = 0,  # number of attributes (Phase 3)
 ):
     """Perform non-maximum suppression (NMS) on prediction results.
 
@@ -70,10 +71,12 @@ def non_max_suppression(
         return output
 
     bs = prediction.shape[0]  # batch size (BCN, i.e. 1,84,6300)
-    nc = nc or (prediction.shape[1] - 4)  # number of classes
-    extra = prediction.shape[1] - nc - 4  # number of extra info
+    nc = nc or (prediction.shape[1] - 4 - na)  # number of classes (subtract na for attributes)
+    nm = prediction.shape[1] - nc - 4 - na  # number of masks/extra info
     mi = 4 + nc  # mask start index
+    ai = 4 + nc + na  # attribute start index (Phase 3)
     xc = prediction[:, 4:mi].amax(1) > conf_thres  # candidates
+    
     xinds = torch.arange(prediction.shape[-1], device=prediction.device).expand(bs, -1)[..., None]  # to track idxs
 
     # Settings
@@ -86,7 +89,7 @@ def non_max_suppression(
         prediction[..., :4] = xywh2xyxy(prediction[..., :4])  # xywh to xyxy
 
     t = time.time()
-    output = [torch.zeros((0, 6 + extra), device=prediction.device)] * bs
+    output = [torch.zeros((0, 6 + nm + na), device=prediction.device)] * bs  # 修改：加上 na
     keepi = [torch.zeros((0, 1), device=prediction.device)] * bs  # to store the kept idxs
     for xi, (x, xk) in enumerate(zip(prediction, xinds)):  # image index, (preds, preds indices)
         # Apply constraints
@@ -99,7 +102,7 @@ def non_max_suppression(
         # Cat apriori labels if autolabelling
         if labels and len(labels[xi]) and not rotated:
             lb = labels[xi]
-            v = torch.zeros((len(lb), nc + extra + 4), device=x.device)
+            v = torch.zeros((len(lb), nc + nm + na + 4), device=x.device)  # 修改：加上 na
             v[:, :4] = xywh2xyxy(lb[:, 1:5])  # box
             v[range(len(lb)), lb[:, 0].long() + 4] = 1.0  # cls
             x = torch.cat((x, v), 0)
@@ -109,17 +112,28 @@ def non_max_suppression(
             continue
 
         # Detections matrix nx6 (xyxy, conf, cls)
-        box, cls, mask = x.split((4, nc, extra), 1)
+        # 处理 na=0 的情况 (Phase 3)
+        if na > 0:
+            box, cls, attr, mask = x.split((4, nc, na, nm), 1)
+        else:
+            box, cls, mask = x.split((4, nc, nm), 1)
+            attr = None
 
         if multi_label:
             i, j = torch.where(cls > conf_thres)
-            x = torch.cat((box[i], x[i, 4 + j, None], j[:, None].float(), mask[i]), 1)
+            if na > 0:
+                x = torch.cat((box[i], x[i, 4 + j, None], j[:, None].float(), attr[i], mask[i]), 1)
+            else:
+                x = torch.cat((box[i], x[i, 4 + j, None], j[:, None].float(), mask[i]), 1)
             if return_idxs:
                 xk = xk[i]
         else:  # best class only
             conf, j = cls.max(1, keepdim=True)
             filt = conf.view(-1) > conf_thres
-            x = torch.cat((box, conf, j.float(), mask), 1)[filt]
+            if na > 0:
+                x = torch.cat((box, conf, j.float(), attr, mask), 1)[filt]
+            else:
+                x = torch.cat((box, conf, j.float(), mask), 1)[filt]
             if return_idxs:
                 xk = xk[filt]
 
@@ -156,7 +170,7 @@ def non_max_suppression(
                 i = TorchNMS.nms(boxes, scores, iou_thres)
         i = i[:max_det]  # limit detections
 
-        output[xi] = x[i]
+        output[xi] = x[i]  # 保留所有信息：boxes + scores + class + attrs + masks
         if return_idxs:
             keepi[xi] = xk[i].view(-1)
         if (time.time() - t) > time_limit:
