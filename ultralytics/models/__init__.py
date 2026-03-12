@@ -7,3 +7,6 @@ from .sam import SAM
 from .yolo import YOLO, YOLOE, YOLOWorld
 
 __all__ = "NAS", "RTDETR", "SAM", "YOLO", "YOLOE", "FastSAM", "YOLOWorld"  # allow simpler import
+
+from .yolo import CLIPEnhancedYOLOE
+__all__ = *__all__, "CLIPEnhancedYOLOE"

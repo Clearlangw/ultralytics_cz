@@ -322,42 +322,6 @@ class YOLOE(Model):
         if self.predictor:
             self.predictor.model.names = self.model.names
 
-    def add_attr_branch(self) -> None:
-        """Add attribute branch to the YOLOE model for fine-grained attribute detection (Phase 2).
-        
-        This method initializes the attribute branch by deepcopying the text branch components.
-        Must be called before setting attributes with set_attr().
-        
-        Examples:
-            >>> model = YOLOE("yoloe-11s-seg.pt")
-            >>> model.add_attr_branch()
-            >>> model.set_attr(["red", "moving", "large"])
-        """
-        assert isinstance(self.model, YOLOEModel)
-        self.model.add_attr_branch()
-
-    def set_attr(self, attrs: list[str]) -> None:
-        """Set attribute names and embeddings for fine-grained detection (Phase 2-3).
-        
-        This method configures the attributes used for fine-grained object detection.
-        Must call add_attr_branch() first.
-        
-        Args:
-            attrs (list[str]): List of attribute names i.e. ["red", "moving", "large"].
-        
-        Examples:
-            >>> model = YOLOE("yoloe-11s-seg.pt")
-            >>> model.add_attr_branch()
-            >>> model.set_attr(["red", "blue", "moving"])
-            >>> results = model.predict("image.jpg")
-            >>> for r in results:
-            ...     descriptions = r.describe(["red", "blue", "moving"], attr_thres=0.5)
-        """
-        assert isinstance(self.model, YOLOEModel)
-        # Store attributes for later use in predict
-        self.attr_names = attrs
-        self.attr_pe = self.model.get_attr_pe(attrs)
-
     def val(
         self,
         validator=None,
@@ -464,19 +428,27 @@ class YOLOE(Model):
             self.predictor = None  # reset predictor if no visual prompts
         self.overrides["agnostic_nms"] = True  # use agnostic nms for YOLOE default
 
-        # Store attribute embeddings in model if set (Phase 3)
-        if hasattr(self, 'attr_pe') and self.attr_pe is not None:
-            # Store in both places for compatibility
-            self.model._attr_pe = self.attr_pe
-            if hasattr(self.model, 'model'):
-                self.model.model._attr_pe = self.attr_pe
+        return super().predict(source, stream, **kwargs)
 
-        results = super().predict(source, stream, **kwargs)
-        
-        # Also set in predictor if it was created
-        if hasattr(self, 'attr_pe') and self.attr_pe is not None and self.predictor is not None:
-            self.predictor.model._attr_pe = self.attr_pe
-            if hasattr(self.predictor.model, 'model'):
-                self.predictor.model.model._attr_pe = self.attr_pe
-        
-        return results
+class CLIPEnhancedYOLOE(YOLOE):
+    def __init__(self, model: str | Path = "yoloe-11s-seg.pt", task: str | None = None, verbose: bool = False) -> None:
+        super().__init__(model=model, task=task, verbose=verbose)
+    
+    @property
+    def task_map(self) -> dict[str, dict[str, Any]]:
+        from ultralytics.nn.tasks import CLIPEnhancedYOLOEModel, CLIPEnhancedYOLOESegModel
+        """Map head to model, trainer, validator, and predictor classes."""
+        return {
+            "detect": {
+                "model": CLIPEnhancedYOLOEModel,
+                "validator": yolo.yoloe.YOLOEDetectValidator,
+                "predictor": yolo.detect.DetectionPredictor,
+                "trainer": yolo.yoloe.YOLOETrainer,
+            },
+            "segment": {
+                "model": CLIPEnhancedYOLOESegModel,
+                "validator": yolo.yoloe.YOLOESegValidator,
+                "predictor": yolo.segment.SegmentationPredictor,
+                "trainer": yolo.yoloe.YOLOESegTrainer,
+            },
+        }

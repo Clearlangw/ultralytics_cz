@@ -17,6 +17,7 @@ from ultralytics.utils.downloads import download
 settings = SETTINGS
 
 MODELS = ("YOLO", "YOLOWorld", "YOLOE", "NAS", "SAM", "FastSAM", "RTDETR")
+MODELS = *MODELS, "CLIPEnhancedYOLOE"
 
 __all__ = (
     "__version__",
