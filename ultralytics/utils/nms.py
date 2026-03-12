@@ -27,6 +27,7 @@ def non_max_suppression(
     end2end: bool = False,
     return_idxs: bool = False,
     na: int = 0,  # number of attributes (Phase 3)
+    box_attr_mask=None,  # 每个框的属性掩码 [n_boxes, na]
 ):
     """Perform non-maximum suppression (NMS) on prediction results.
 
@@ -91,6 +92,14 @@ def non_max_suppression(
     t = time.time()
     output = [torch.zeros((0, 6 + nm + na), device=prediction.device)] * bs  # 修改：加上 na
     keepi = [torch.zeros((0, 1), device=prediction.device)] * bs  # to store the kept idxs
+    attr_mask_out = [torch.zeros((0, na), device=prediction.device)] * bs if box_attr_mask is not None else None  # 保存属性掩码
+    
+    # 如果有属性掩码，需要展平以匹配 prediction 的结构
+    if box_attr_mask is not None:
+        # box_attr_mask: [n_boxes, na]
+        # 需要转换为与 prediction 对应的格式
+        box_attr_mask_flat = box_attr_mask.to(prediction.device)
+    
     for xi, (x, xk) in enumerate(zip(prediction, xinds)):  # image index, (preds, preds indices)
         # Apply constraints
         # x[((x[:, 2:4] < min_wh) | (x[:, 2:4] > max_wh)).any(1), 4] = 0  # width-height
@@ -98,6 +107,12 @@ def non_max_suppression(
         x = x[filt]
         if return_idxs:
             xk = xk[filt]
+        
+        # 处理属性掩码
+        if box_attr_mask is not None and xi < len(box_attr_mask_flat):
+            # 这里需要追踪哪些框被保留
+            # 暂时先保存原始掩码，后续在 NMS 后再过滤
+            pass
 
         # Cat apriori labels if autolabelling
         if labels and len(labels[xi]) and not rotated:

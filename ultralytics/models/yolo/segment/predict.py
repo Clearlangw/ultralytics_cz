@@ -60,17 +60,12 @@ class SegmentationPredictor(DetectionPredictor):
             >>> results = predictor.postprocess(preds, img, orig_img)
         """
         # Extract protos - tuple if PyTorch model or array if exported
-        # print(type(preds))
-        # print(type(preds[0]))
-        # import sys
-        # sys.exit()
         # 来自forward的输出得到tuple，y是_inference得到的张量，preds是forward_head的输出字典
         protos = preds[0][1] if isinstance(preds[0], tuple) else preds[1]
         # 新增：提取属性分数和属性数量
         preds_dict = preds[1] if isinstance(preds[0], tuple) else preds[0]
         #attr_scores = preds_dict.get('attr_scores', None)  # shape: (batch, na, num_boxes)
         na = preds_dict.get('na', 0)  # 属性数量
-
         # 调用父类 postprocess，并传入属性信息
         return super().postprocess(preds[0], img, orig_imgs, protos=protos, na=na)
 
@@ -112,7 +107,8 @@ class SegmentationPredictor(DetectionPredictor):
         # NMS 输出格式：boxes(4) + scores(1) + class(1) + attr_scores(na) + mask_coeff(nm)
         attr_scores = None
         nm = proto.shape[1] if proto is not None else 0
-        
+        # print(pred)
+        # import
         if pred.shape[0] > 0 and na > 0:
             # 属性分数在位置 [6:6+na]
             attr_scores = pred[:, 6:6+na]

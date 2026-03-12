@@ -220,6 +220,7 @@ class Instances:
         keypoints: np.ndarray = None,
         bbox_format: str = "xywh",
         normalized: bool = True,
+        box_attrs: list = None,
     ) -> None:
         """Initialize the Instances object with bounding boxes, segments, and keypoints.
 
@@ -229,11 +230,13 @@ class Instances:
             keypoints (np.ndarray, optional): Keypoints with shape (N, 17, 3) in format (x, y, visible).
             bbox_format (str): Format of bboxes.
             normalized (bool): Whether the coordinates are normalized.
+            box_attrs (list, optional): Box attributes list.
         """
         self._bboxes = Bboxes(bboxes=bboxes, format=bbox_format)
         self.keypoints = keypoints
         self.normalized = normalized
         self.segments = segments
+        self.box_attrs = box_attrs
 
     def convert_bbox(self, format: str) -> None:
         """Convert bounding box format.
@@ -329,6 +332,7 @@ class Instances:
         """
         segments = self.segments[index] if len(self.segments) else self.segments
         keypoints = self.keypoints[index] if self.keypoints is not None else None
+        box_attrs = [self.box_attrs[i] for i in range(len(self.box_attrs)) if self.box_attrs is not None and (isinstance(index, (int, slice)) or index[i])] if self.box_attrs is not None else None
         bboxes = self.bboxes[index]
         bbox_format = self._bboxes.format
         return Instances(
@@ -337,6 +341,7 @@ class Instances:
             keypoints=keypoints,
             bbox_format=bbox_format,
             normalized=self.normalized,
+            box_attrs=box_attrs,
         )
 
     def flipud(self, h: int) -> None:
@@ -412,6 +417,8 @@ class Instances:
                 self.segments = self.segments[good]
             if self.keypoints is not None:
                 self.keypoints = self.keypoints[good]
+            if self.box_attrs is not None:
+                self.box_attrs = [self.box_attrs[i] for i in range(len(self.box_attrs)) if good[i]]
         return good
 
     def update(self, bboxes: np.ndarray, segments: np.ndarray = None, keypoints: np.ndarray = None):
@@ -476,7 +483,16 @@ class Instances:
         else:
             cat_segments = np.concatenate([b.segments for b in instances_list], axis=axis)
         cat_keypoints = np.concatenate([b.keypoints for b in instances_list], axis=axis) if use_keypoint else None
-        return cls(cat_boxes, cat_segments, cat_keypoints, bbox_format, normalized)
+        
+        # Concatenate box_attrs
+        cat_box_attrs = None
+        if any(ins.box_attrs is not None for ins in instances_list):
+            cat_box_attrs = []
+            for ins in instances_list:
+                if ins.box_attrs is not None:
+                    cat_box_attrs.extend(ins.box_attrs)
+        
+        return cls(cat_boxes, cat_segments, cat_keypoints, bbox_format, normalized, cat_box_attrs)
 
     @property
     def bboxes(self) -> np.ndarray:

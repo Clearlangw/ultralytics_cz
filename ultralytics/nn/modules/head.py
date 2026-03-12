@@ -1128,6 +1128,23 @@ class YOLOEDetect(Detect):
             return self.forward_lrpc(x[:3])
         return super().forward(x)
 
+
+    def forward(
+        self, x: list[torch.Tensor]
+        ) -> dict[str, torch.Tensor] | torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Concatenates and returns predicted bounding boxes and class probabilities."""
+        preds = self.forward_head(x, **self.one2many)
+        if self.end2end:
+            x_detach = [xi.detach() for xi in x]
+            one2one = self.forward_head(x_detach, **self.one2one)
+            preds = {"one2many": preds, "one2one": one2one}
+        if self.training:
+            return preds
+        y = self._inference(preds["one2one"] if self.end2end else preds)
+        if self.end2end:
+            y = self.postprocess(y.permute(0, 2, 1))
+        return y if self.export else (y, preds) #得到tuple，y是result，preds是输出字典
+        
     def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Decode predicted bounding boxes and class probabilities based on multiple-level feature maps.
 
@@ -1187,12 +1204,21 @@ class YOLOEDetect(Detect):
         return dict(box_head=self.one2one_cv2, cls_head=self.one2one_cv3, contrastive_head=self.one2one_cv4)
 
     def forward_head(self, x, box_head, cls_head, contrastive_head):
-        """Concatenates and returns predicted bounding boxes, class probabilities, and contrastive scores."""
+        """Concatenates and returns predicted bounding boxes, class probabilities, and contrastive scores.
+        
+        支持两种属性模式：
+        1. 固定属性（推理时）：所有框共享同一个属性列表
+        2. 动态属性（训练时）：每个框有不同的属性列表
+        """
         # Support both standard (4 inputs) and extended (5 inputs with attribute embeddings) modes
         has_attr = len(x) == 5
+        
+        # print("has_attr is",has_attr)
+        # import sys
+        # sys.exit()
         if has_attr:
             assert len(x) == 5, f"Expected 4 or 5 features, but got {len(x)}."
-            ape = x[-1]  # attribute prompt embeddings
+            ape = x[-1]  # attribute prompt embeddings [B, na, 512]
             x = x[:-1]  # remove ape from x for standard processing
         else:
             assert len(x) == 4, f"Expected 4 features including 3 feature maps and 1 text embeddings, but got {len(x)}."
@@ -1211,14 +1237,17 @@ class YOLOEDetect(Detect):
         result = dict(boxes=boxes, scores=scores, feats=x[:3])
         
         # Process attribute branch if enabled (Phase 2)
+        # 支持两种模式：
+        # 1. 固定属性：ape.shape = [B, na, 512]，所有框共享
+        # 2. 动态属性：ape.shape = [B, na, 512]，但在 loss 中使用 box_attr_mask 处理
         if has_attr and len(self.cv_attr) > 0:
-            ape_normalized = self.get_attr_pe(ape)
+            ape_normalized = self.get_attr_pe(ape)  # [B, na, 512]
             attr_scores = torch.cat(
                 [self.attr_head[i](self.cv_attr[i](x[i]), ape_normalized).reshape(bs, ape.shape[1], -1) for i in range(self.nl)], 
                 dim=-1
             )
-            result['attr_scores'] = attr_scores
-            result['na'] = ape.shape[1]  # 修改：使用 ape.shape[1] 而不是 x["attr_scores"]
+            result['attr_scores'] = attr_scores  # [B, na, n_anc]
+            result['na'] = ape.shape[1]  # 属性数量
         return result
 
 

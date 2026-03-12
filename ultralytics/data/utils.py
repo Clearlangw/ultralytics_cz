@@ -195,8 +195,8 @@ def verify_image(args: tuple) -> tuple:
 def verify_image_label(args: tuple) -> list:
     """Verify one image-label pair."""
     im_file, lb_file, prefix, keypoint, num_cls, nkpt, ndim, single_cls = args
-    # Number (missing, found, empty, corrupt), message, segments, keypoints
-    nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, "", [], None
+    # Number (missing, found, empty, corrupt), message, segments, keypoints, box_attrs
+    nm, nf, ne, nc, msg, segments, keypoints, box_attrs = 0, 0, 0, 0, "", [], None, []
     try:
         # Verify images
         im = Image.open(im_file)
@@ -216,7 +216,31 @@ def verify_image_label(args: tuple) -> list:
         if os.path.isfile(lb_file):
             nf = 1  # label found
             with open(lb_file, encoding="utf-8") as f:
-                lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
+                lb_lines = [x for x in f.read().strip().splitlines() if len(x)]
+                
+                # Phase 1: 提取属性和数值部分
+                import re
+                box_attrs = []  # list[list[str]]，每个元素对应一个 box 的属性列表
+                lb_numeric = []  # 数值部分
+                
+                for line in lb_lines:
+                    # 查找第一个单引号位置
+                    quote_pos = line.find("'")
+                    if quote_pos == -1:
+                        # 无属性行
+                        lb_numeric.append(line)
+                        box_attrs.append([])
+                    else:
+                        # 有属性行：分离数值部分和属性部分
+                        numeric_part = line[:quote_pos].strip()
+                        attr_part = line[quote_pos:]
+                        lb_numeric.append(numeric_part)
+                        # 用正则提取所有单引号内的属性
+                        attrs = re.findall(r"'([^']+)'", attr_part)
+                        box_attrs.append(attrs)
+                
+                lb = [x.split() for x in lb_numeric if len(x)]
+                
                 if any(len(x) > 6 for x in lb) and (not keypoint):  # is segment
                     classes = np.array([x[0] for x in lb], dtype=np.float32)
                     segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
@@ -244,24 +268,29 @@ def verify_image_label(args: tuple) -> list:
                     lb = lb[i]  # remove duplicates
                     if segments:
                         segments = [segments[x] for x in i]
+                    # 同时过滤 box_attrs
+                    box_attrs = [box_attrs[x] for x in i]
                     msg = f"{prefix}{im_file}: {nl - len(i)} duplicate labels removed"
             else:
                 ne = 1  # label empty
                 lb = np.zeros((0, (5 + nkpt * ndim) if keypoint else 5), dtype=np.float32)
+                box_attrs = []
         else:
             nm = 1  # label missing
             lb = np.zeros((0, (5 + nkpt * ndim) if keypoint else 5), dtype=np.float32)
+            box_attrs = []
         if keypoint:
             keypoints = lb[:, 5:].reshape(-1, nkpt, ndim)
             if ndim == 2:
                 kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
                 keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
         lb = lb[:, :5]
-        return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg
+
+        return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg, box_attrs
     except Exception as e:
         nc = 1
         msg = f"{prefix}{im_file}: ignoring corrupt image/label: {e}"
-        return [None, None, None, None, None, nm, nf, ne, nc, msg]
+        return [None, None, None, None, None, nm, nf, ne, nc, msg, []]
 
 
 def visualize_image_annotations(image_path: str, txt_path: str, label_map: dict[int, str]):

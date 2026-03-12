@@ -2049,6 +2049,7 @@ class Format:
             >>> formatted_labels = formatter(labels)
             >>> print(formatted_labels.keys())
         """
+        # print()
         img = labels.pop("img")
         h, w = img.shape[:2]
         cls = labels.pop("cls")
@@ -2102,6 +2103,9 @@ class Format:
         # Then we can use collate_fn
         if self.batch_idx:
             labels["batch_idx"] = torch.zeros(nl)
+        # Preserve box_attrs from instances
+        if instances.box_attrs is not None:
+            labels["box_attrs"] = instances.box_attrs
         return labels
 
     def _format_img(self, img: np.ndarray) -> torch.Tensor:

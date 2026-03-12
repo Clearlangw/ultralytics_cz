@@ -427,7 +427,14 @@ class BaseTrainer:
                 # Forward
                 try:
                     with autocast(self.amp):
+                        # print(batch.keys())
+                        # import sys
+                        # sys.exit()
                         batch = self.preprocess_batch(batch)
+                        # print(batch.keys())
+                        # # print(batch['box_attrs'])
+                        # import sys
+                        # sys.exit()
                         if self.args.compile:
                             # Decouple inference and loss calculations for improved compile performance
                             preds = self.model(batch["img"])
@@ -697,6 +704,9 @@ class BaseTrainer:
             LOGGER.info("Overriding class names with single class.")
             data["names"] = {0: "item"}
             data["nc"] = 1
+        # print(data)
+        # import sys
+        # sys.exit()
         return data
 
     def setup_model(self):

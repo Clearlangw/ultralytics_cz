@@ -51,13 +51,15 @@ class DetectionPredictor(BasePredictor):
             >>> processed_results = predictor.postprocess(preds, img, orig_imgs)
         """
         save_feats = getattr(self, "_feats", None) is not None
+        
+        # 获取属性数量：优先从 kwargs，否则从 preds[1] 中获取
         na = kwargs.get('na', 0)
-        # print(preds)
-        # print(preds[0].shape)
-        # print(preds[1].shape)
-        # print(len(self.model.names))
-        # import sys
-        # sys.exit()
+        if na == 0 and isinstance(preds, (list, tuple)) and len(preds) > 1:
+            if isinstance(preds[1], dict):
+                na = preds[1].get('na', 0)
+        
+        box_attr_mask = kwargs.pop('box_attr_mask', None)  # 提取属性掩码
+        
         preds = nms.non_max_suppression(
             preds,
             self.args.conf,
@@ -70,6 +72,7 @@ class DetectionPredictor(BasePredictor):
             rotated=self.args.task == "obb",
             return_idxs=save_feats,
             na=na,  # 传入属性数量 (Phase 3)
+            box_attr_mask=box_attr_mask,  # 传入属性掩码（每个框的属性）
         )
 
         if not isinstance(orig_imgs, list):  # input images are a torch.Tensor, not a list
@@ -79,6 +82,8 @@ class DetectionPredictor(BasePredictor):
             obj_feats = self.get_obj_feats(self._feats, preds[1])
             preds = preds[0]
 
+        # 传递 na 到 construct_results
+        kwargs['na'] = na
         results = self.construct_results(preds, img, orig_imgs, **kwargs)
 
         if save_feats:
@@ -112,18 +117,19 @@ class DetectionPredictor(BasePredictor):
         """
         na = kwargs.get('na', 0)
         return [
-            self.construct_result(pred, img, orig_img, img_path)
+            self.construct_result(pred, img, orig_img, img_path, na=na)
             for pred, orig_img, img_path in zip(preds, orig_imgs, self.batch[0])
         ]
 
-    def construct_result(self, pred, img, orig_img, img_path):
+    def construct_result(self, pred, img, orig_img, img_path, na=0):
         """Construct a single Results object from one image prediction.
 
         Args:
-            pred (torch.Tensor): Predicted boxes and scores with shape (N, 6) where N is the number of detections.
+            pred (torch.Tensor): Predicted boxes and scores with shape (N, 6+na) where N is the number of detections.
             img (torch.Tensor): Preprocessed image tensor used for inference.
             orig_img (np.ndarray): Original image before preprocessing.
             img_path (str): Path to the original image file.
+            na (int): Number of attributes (Phase 3).
 
         Returns:
             (Results): Results object containing the original image, image path, class names, and scaled bounding boxes.
@@ -131,10 +137,11 @@ class DetectionPredictor(BasePredictor):
         pred[:, :4] = ops.scale_boxes(img.shape[2:], pred[:, :4], orig_img.shape)
         
         # Extract attribute scores if present (Phase 3)
+        # Format: boxes(4) + scores(1) + class(1) + attr_scores(na) = 6 + na
         attr_scores = None
-        if pred.shape[1] > 6:
-            # Attribute scores are appended after standard detection outputs
-            attr_scores = pred[:, 6:]
+        if na > 0 and pred.shape[1] > 6:
+            # Attribute scores are in positions [6:6+na]
+            attr_scores = pred[:, 6:6+na]
             pred = pred[:, :6]
         
         return Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], attr_scores=attr_scores)

@@ -1015,7 +1015,7 @@ class YOLOEModel(DetectionModel):
         """
         super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
         self.text_model = self.yaml.get("text_model", "mobileclip:blt")
-
+        
     @smart_inference_mode()
     def get_text_pe(self, text, batch=80, cache_clip_model=False, without_reprta=False):
         """Get text positional embeddings using the CLIP model.
@@ -1065,7 +1065,8 @@ class YOLOEModel(DetectionModel):
             (torch.Tensor): Attribute positional embeddings [1, N_attr, 512].
         """
         from ultralytics.nn.text_model import build_text_model
-
+        # import pdb 
+        # pdb.set_trace()
         device = next(self.model.parameters()).device
         if not getattr(self, "clip_model", None) and cache_clip_model:
             self.clip_model = build_text_model(getattr(self, "text_model", "mobileclip:blt"), device=device)
@@ -1083,6 +1084,24 @@ class YOLOEModel(DetectionModel):
         head = self.model[-1]
         assert isinstance(head, YOLOEDetect)
         return head.get_attr_pe(attr_feats)  # run attribute text head
+
+
+    # def forward(self, x, *args, **kwargs):
+    #     """Perform forward pass of the model for either training or inference.
+
+    #     If x is a dict, calculates and returns the loss for training. Otherwise, returns predictions for inference.
+
+    #     Args:
+    #         x (torch.Tensor | dict): Input tensor for inference, or dict with image tensor and labels for training.
+    #         *args (Any): Variable length argument list.
+    #         **kwargs (Any): Arbitrary keyword arguments.
+
+    #     Returns:
+    #         (torch.Tensor): Loss if x is a dict (training), or network predictions (inference).
+    #     """
+    #     if isinstance(x, dict):  # for cases of training and validating while training.
+    #         return self.loss(x, *args, **kwargs)
+    #     return self.predict(x, *args, **kwargs)
 
     @smart_inference_mode()
     def get_visual_pe(self, img, visual):
@@ -1281,10 +1300,16 @@ class YOLOEModel(DetectionModel):
                 else self.init_criterion()
             )
         if preds is None:
+            # Phase 5: 支持属性嵌入
+            ape = batch.get("attr_pe", None)  # 属性嵌入 【1，14，512】
+            # print(ape.shape)
+            # import sys
+            # sys.exit()
             preds = self.forward(
                 batch["img"],
                 tpe=None if "visuals" in batch else batch.get("txt_feats", None),
                 vpe=batch.get("visuals", None),
+                ape=ape,  # 传递属性嵌入
             )
         return self.criterion(preds, batch)
 

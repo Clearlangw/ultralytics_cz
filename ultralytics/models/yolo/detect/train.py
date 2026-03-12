@@ -19,7 +19,7 @@ from ultralytics.utils import DEFAULT_CFG, LOGGER, RANK
 from ultralytics.utils.patches import override_configs
 from ultralytics.utils.plotting import plot_images, plot_labels
 from ultralytics.utils.torch_utils import torch_distributed_zero_first, unwrap_model
-
+from ultralytics.data.dataset import YOLODataset
 
 class DetectionTrainer(BaseTrainer):
     """A class extending the BaseTrainer class for training based on a detection model.
@@ -114,6 +114,7 @@ class DetectionTrainer(BaseTrainer):
             (dict): Preprocessed batch with normalized images.
         """
         for k, v in batch.items():
+            #print(v)
             if isinstance(v, torch.Tensor):
                 batch[k] = v.to(self.device, non_blocking=self.device.type == "cuda")
         batch["img"] = batch["img"].float() / 255

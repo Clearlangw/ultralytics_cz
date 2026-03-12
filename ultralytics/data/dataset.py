@@ -97,6 +97,8 @@ class YOLODataset(BaseDataset):
             (dict): Dictionary containing cached labels and related information.
         """
         x = {"labels": []}
+        # print(" im in cache_labels")
+        # print("*"*100)
         nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
         desc = f"{self.prefix}Scanning {path.parent / path.stem}..."
         total = len(self.im_files)
@@ -120,8 +122,10 @@ class YOLODataset(BaseDataset):
                     repeat(self.single_cls),
                 ),
             )
+            # print("results are",results)
+            # print("%"*100)
             pbar = TQDM(results, desc=desc, total=total)
-            for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+            for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg, box_attrs in pbar:
                 nm += nm_f
                 nf += nf_f
                 ne += ne_f
@@ -137,13 +141,17 @@ class YOLODataset(BaseDataset):
                             "keypoints": keypoint,
                             "normalized": True,
                             "bbox_format": "xywh",
+                            "box_attrs": box_attrs,  # Phase 1: 新增属性字段
                         }
                     )
                 if msg:
                     msgs.append(msg)
                 pbar.desc = f"{desc} {nf} images, {nm + ne} backgrounds, {nc} corrupt"
             pbar.close()
-
+            # print("x['labels'] are",x["labels"])
+            # print("?"*100)
+            # import sys
+            # sys.exit() #这里出去的字符串正常
         if msgs:
             LOGGER.info("\n".join(msgs))
         if nf == 0:
@@ -170,7 +178,7 @@ class YOLODataset(BaseDataset):
             assert cache["hash"] == get_hash(self.label_files + self.im_files)  # identical hash
         except (FileNotFoundError, AssertionError, AttributeError, ModuleNotFoundError):
             cache, exists = self.cache_labels(cache_path), False  # run cache ops
-
+            
         # Display cache
         nf, nm, ne, nc, n = cache.pop("results")  # found, missing, empty, corrupt, total
         if exists and LOCAL_RANK in {-1, 0}:
@@ -187,7 +195,10 @@ class YOLODataset(BaseDataset):
                 f"No valid images found in {cache_path}. Images with incorrectly formatted labels are ignored. {HELP_URL}"
             )
         self.im_files = [lb["im_file"] for lb in labels]  # update im_files
-
+        # print(labels)
+        # print("H"*100)
+        # import sys
+        # sys.exit() #这里也正常
         # Check if the dataset is all boxes or all segments
         lengths = ((len(lb["cls"]), len(lb["bboxes"]), len(lb["segments"])) for lb in labels)
         len_cls, len_boxes, len_segments = (sum(x) for x in zip(*lengths))
@@ -264,6 +275,7 @@ class YOLODataset(BaseDataset):
         keypoints = label.pop("keypoints", None)
         bbox_format = label.pop("bbox_format")
         normalized = label.pop("normalized")
+        box_attrs = label.get("box_attrs", None)
 
         # NOTE: do NOT resample oriented boxes
         segment_resamples = 100 if self.use_obb else 1000
@@ -275,7 +287,10 @@ class YOLODataset(BaseDataset):
             segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
         else:
             segments = np.zeros((0, segment_resamples, 2), dtype=np.float32)
-        label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized)
+        label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized, box_attrs=box_attrs)
+        # Phase 1: 保留 box_attrs 作为顶层字段，便于直接访问
+        if box_attrs is not None:
+            label["box_attrs"] = box_attrs
         return label
 
     @staticmethod
@@ -300,11 +315,31 @@ class YOLODataset(BaseDataset):
                 value = torch.nn.utils.rnn.pad_sequence(value, batch_first=True)
             if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb"}:
                 value = torch.cat(value, 0)
+            # Phase 1: 处理 box_attrs（list[list[str]]）
+            elif k == "box_attrs":
+                # box_attrs 是 tuple[list[list[str]]]，需要展平为单个 list[list[str]]
+                value = [attr for sample_attrs in value for attr in sample_attrs]
+            elif k == "instances":
+                # Extract box_attrs from instances before concatenating
+                box_attrs_list = []
+                for inst in value:
+                    if inst.box_attrs is not None:
+                        box_attrs_list.append(inst.box_attrs)
+                # Concatenate instances
+                value = Instances.concatenate(value, axis=0)
+                # Store box_attrs separately if present
+                if box_attrs_list:
+                    new_batch["box_attrs"] = [attr for attrs in box_attrs_list for attr in attrs]
             new_batch[k] = value
         new_batch["batch_idx"] = list(new_batch["batch_idx"])
         for i in range(len(new_batch["batch_idx"])):
             new_batch["batch_idx"][i] += i  # add target image index for build_targets()
         new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
+        # print(new_batch.keys())
+        # print("L"*100)
+        # import sys
+        # sys.exit() #这里还有
+
         return new_batch
 
 
@@ -348,6 +383,10 @@ class YOLOMultiModalDataset(YOLODataset):
         # NOTE: some categories are concatenated with its synonyms by `/`.
         # NOTE: and `RandomLoadText` would randomly select one of them if there are multiple words.
         labels["texts"] = [v.split("/") for _, v in self.data["names"].items()]
+        
+        # Phase 1: 保留 box_attrs 字段（如果存在）
+        if "box_attrs" in label:
+            labels["box_attrs"] = label["box_attrs"]
 
         return labels
 

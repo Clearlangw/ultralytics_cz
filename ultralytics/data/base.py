@@ -117,6 +117,10 @@ class BaseDataset(Dataset):
         self.im_files = self.get_img_files(self.img_path)
         self.labels = self.get_labels()
         self.update_labels(include_class=classes)  # single_cls and include_class
+        # print(self.labels[0])
+        # import sys
+        # sys.exit()
+        #这里没问题了
         self.ni = len(self.labels)  # number of images
         self.rect = rect
         self.batch_size = batch_size
@@ -204,6 +208,8 @@ class BaseDataset(Dataset):
                     self.labels[i]["segments"] = [segments[si] for si, idx in enumerate(j) if idx]
                 if keypoints is not None:
                     self.labels[i]["keypoints"] = keypoints[j]
+                if "bbox_attrs" in self.labels[i]:
+                    self.labels[i]["bbox_attrs"] = self.labels[i]["bbox_attrs"][j]
             if self.single_cls:
                 self.labels[i]["cls"][:, 0] = 0
 
@@ -373,7 +379,9 @@ class BaseDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         """Return transformed label information for given index."""
-        return self.transforms(self.get_image_and_label(index))
+        label = self.get_image_and_label(index)
+        label = self.transforms(label) #这里也没事啊
+        return label
 
     def get_image_and_label(self, index: int) -> dict[str, Any]:
         """Get and return label information from the dataset.
