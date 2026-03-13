@@ -56,7 +56,8 @@ class CLIPVisualExtractor(nn.Module):
 
     def get_spatial_feats(self, image: Union[Image.Image, torch.Tensor], dtype: torch.dtype = torch.float32, return_cls_token: bool = False) -> torch.Tensor:
         self._spatial_hidden = None
-        image_device = image.device if isinstance(image, torch.Tensor) else 'cpu'
+        image_device = getattr(image, "device", None) or 'cpu'
+        dtype = getattr(image, "dtype", None) or dtype
         same_device_image = image.to(self.device) if isinstance(image, torch.Tensor) else image
         cls_token = self._encode_image(same_device_image, dtype).to(image_device).clone()
         self._spatial_hidden = self._spatial_hidden.to(dtype).to(image_device).clone()

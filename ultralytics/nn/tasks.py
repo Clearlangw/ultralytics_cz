@@ -1379,6 +1379,8 @@ class Ensemble(torch.nn.ModuleList):
         y = torch.cat(y, 2)  # nms ensemble, y shape(B, HW, C*num_models)
         return y, None  # inference, train output
 
+from ultralytics.nn.extend_modules.clip_enhanced_yoloe_head import CLIPEnhancedYOLOEDetect, CLIPEnhancedYOLOESegment
+from ultralytics.nn.extend_modules.clip_enhanced_yoloe_model import CLIPEnhancedYOLOEModel, CLIPEnhancedYOLOESegModel
 
 # Functions ------------------------------------------------------------------------------------------------------------
 
@@ -1750,12 +1752,15 @@ def parse_model(d, ch, verbose=True):
                 Pose26,
                 OBB,
                 OBB26,
+                CLIPEnhancedYOLOEDetect,
+                CLIPEnhancedYOLOESegment,
             }
         ):
             args.extend([reg_max, end2end, [ch[x] for x in f]])
             if m is Segment or m is YOLOESegment or m is Segment26 or m is YOLOESegment26:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
-            if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26}:
+            if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26,
+                CLIPEnhancedYOLOEDetect, CLIPEnhancedYOLOESegment}:
                 m.legacy = legacy
         elif m is v10Detect:
             args.append([ch[x] for x in f])
