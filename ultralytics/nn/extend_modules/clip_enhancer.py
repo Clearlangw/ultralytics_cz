@@ -34,10 +34,6 @@ class CLIPVisualExtractor(nn.Module):
         self.input_resolution = self.model.visual.input_resolution
         self.device = device
 
-    def train(self, mode):
-        self.training = mode
-        return self
-
     def hook_register(self):
         self._spatial_hidden = None
         from clip.model import ModifiedResNet, VisionTransformer
@@ -58,7 +54,6 @@ class CLIPVisualExtractor(nn.Module):
         else:
             raise NotImplementedError("unacceptable visual extractor type")
 
-    @smart_inference_mode()
     def get_spatial_feats(self, image: Union[Image.Image, torch.Tensor], dtype: torch.dtype = torch.float32, return_cls_token: bool = False) -> torch.Tensor:
         self._spatial_hidden = None
         image_device = image.device if isinstance(image, torch.Tensor) else 'cpu'
@@ -70,18 +65,16 @@ class CLIPVisualExtractor(nn.Module):
         else:
             return self._spatial_hidden
     
-    @smart_inference_mode()
     def align_to_sizes(self, spatial_feats, sizes):
         """按 sizes 列表对齐 spatial_feats 到多个尺度."""
         aligned_feats = []
         for (h, w) in sizes:
             # 使用双线性插值
             aligned_feats.append(
-                torch.nn.functional.interpolate(spatial_feats, size=(h, w), mode='bilinear', align_corners=False)
+                torch.nn.functional.interpolate(spatial_feats, size=(h, w), mode='bilinear', align_corners=False).clone()
             )
         return aligned_feats
 
-    @smart_inference_mode()
     def _encode_image(self, image: Union[Image.Image, torch.Tensor], dtype: torch.dtype = torch.float32) -> torch.Tensor:
         """Encode images into normalized feature vectors.
 
@@ -121,7 +114,8 @@ class CLIPEnhancer(nn.Module):
         forward 输入第一个参数为 image tensor，后续参数为特征图。
         """
         super().__init__()
-        self.extractor = CLIPVisualExtractor(clip_size, device, clip_model, clip_image_preprocess).requires_grad_(False)
+        self.extractor = CLIPVisualExtractor(clip_size, device, clip_model, clip_image_preprocess)
+        self.extractor.eval()
         self.channels = [channels] if isinstance(channels, int) else channels
         self.clip_channels = self.extractor.channels
         self.convs = nn.ModuleList([
@@ -129,13 +123,19 @@ class CLIPEnhancer(nn.Module):
             for c in self.channels
         ])
 
+    def train(self, mode):
+        self.training = mode
+        self.convs.train(mode)
+        self.extractor.eval()
+        return self
+
     def forward(self, x: List[torch.Tensor]) -> Union[torch.Tensor, Tuple]:
         images = x[0]
         feats = x[1:]
         with torch.no_grad():
             clip_feats = self.extractor.get_spatial_feats(images)
             spatial_aligned_clip_feats = self.extractor.align_to_sizes(clip_feats, [e.shape[-2:] for e in feats])
-            spatial_aligned_clip_feats = [e.clone() for e in spatial_aligned_clip_feats]
+        spatial_aligned_clip_feats = [e.clone() for e in spatial_aligned_clip_feats]
         aligned_clip_feats = [
             conv(e)
             for conv, e in zip(self.convs, spatial_aligned_clip_feats)

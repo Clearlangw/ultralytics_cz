@@ -21,8 +21,8 @@ class CLIPFeatFuser(nn.Module):
         feats = x[1:]
         clip_feats = self.enhancer(x)
 
-        feats = [conv(e) for conv, e in zip(self.feat_proj, feats)]
-        clip_feats = [conv(e) for conv, e in zip(self.clip_proj, clip_feats)]
+        feats = [e + conv(e) for conv, e in zip(self.feat_proj, feats)]
+        clip_feats = [e + conv(e) for conv, e in zip(self.clip_proj, clip_feats)]
         
         fused_feats = [f1 + f2 for f1, f2 in zip(feats, clip_feats)]
         return fused_feats
