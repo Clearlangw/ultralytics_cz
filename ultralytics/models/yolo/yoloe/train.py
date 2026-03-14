@@ -144,11 +144,17 @@ class YOLOEPETrainer(DetectionTrainer):
         tpe = model.get_text_pe(names)
         model.set_classes(names, tpe)
 
-        # Re-initialize attribute branch BEFORE fuse(), because fuse() replaces
-        # cv3's last Conv2d (embed→nc) and _init_attr_branch deepcopies cv3.
-        # If called after fuse(), cv_attr would have wrong output channels (nc
-        # instead of embed), causing shape mismatch in BNContrastiveHead einsum.
-        model.add_attr_branch()
+        # Determine whether to use the attribute branch.
+        # Priority order:
+        #   1. checkpoint already has a trained branch (head.with_attr == True after load)
+        #   2. caller passed with_attr=True in train() overrides
+        # In both cases add_attr_branch() is idempotent and MUST be called BEFORE
+        # fuse(), because fuse() replaces cv3's last Conv2d (embed→nc) and
+        # _init_attr_branch deepcopies cv3.  Calling after fuse() would give
+        # cv_attr the wrong output channels (nc instead of embed).
+        want_attr = getattr(self.args, 'with_attr', False) or getattr(model.model[-1], 'with_attr', False)
+        if want_attr:
+            model.add_attr_branch()  # idempotent – skips if weights already loaded
 
         model.model[-1].fuse(model.pe)  # fuse text embeddings to classify head
         model.model[-1].cv3[0][2] = deepcopy(model.model[-1].cv3[0][2]).requires_grad_(True)
@@ -158,7 +164,7 @@ class YOLOEPETrainer(DetectionTrainer):
         if getattr(model.model[-1], "one2one_cv3", None) is not None:
             model.model[-1].one2one_cv3[0][2] = deepcopy(model.model[-1].cv3[0][2]).requires_grad_(True)
             model.model[-1].one2one_cv3[1][2] = deepcopy(model.model[-1].cv3[1][2]).requires_grad_(True)
-            model.model[-1].one2one_cv3[2][2] = deepcopy(model.model[-1].cv3[2][2]).requires_grad_(True) #不兼容了操他妈，这里如果不用属性就注释
+            model.model[-1].one2one_cv3[2][2] = deepcopy(model.model[-1].cv3[2][2]).requires_grad_(True)
 
         model.train()
 

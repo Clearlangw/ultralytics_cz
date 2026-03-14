@@ -994,7 +994,7 @@ class YOLOEDetect(Detect):
     is_fused = False
 
     def __init__(
-        self, nc: int = 80, embed: int = 512, with_bn: bool = False, reg_max=16, end2end=False, ch: tuple = ()
+        self, nc: int = 80, embed: int = 512, with_bn: bool = False, reg_max=16, end2end=False, ch: tuple = (), with_attr: bool = False
     ):
         """Initialize YOLO detection layer with nc classes and layer channels ch.
 
@@ -1005,6 +1005,7 @@ class YOLOEDetect(Detect):
             reg_max (int): Maximum number of DFL channels.
             end2end (bool): Whether to use end-to-end NMS-free detection.
             ch (tuple): Tuple of channel sizes from backbone feature maps.
+            with_attr (bool): Whether to initialize the attribute branch at construction time.
         """
         super().__init__(nc, reg_max, end2end, ch)
         c3 = max(ch[0], min(self.nc, 100))
@@ -1030,11 +1031,20 @@ class YOLOEDetect(Detect):
         self.reprta = Residual(SwiGLUFFN(embed, embed))
         self.savpe = SAVPE(ch, c3, embed)
         self.embed = embed
-        
-        # Attribute branch (Phase 2) - initialized on demand via add_attr_branch
-        self.cv_attr = nn.ModuleList()  # attribute visual feature extraction
+
+        # Attribute branch (Phase 2).
+        # Always declare these as real nn.Module instances so that state_dict()
+        # contains their keys and load_state_dict() can restore trained weights
+        # from a checkpoint.  Using None would cause intersect_dicts() to drop
+        # the checkpoint keys silently, permanently losing trained attr weights.
+        # _init_attr_branch() is idempotent: if cv_attr is already populated
+        # (weights loaded from checkpoint), it skips and does NOT overwrite.
+        self.cv_attr = nn.ModuleList()  # attribute visual feature extraction (empty = branch inactive)
         self.attr_head = nn.ModuleList()  # attribute contrastive head
-        self.reprta_attr = None  # attribute text embedding refiner (initialized on demand)
+        self.reprta_attr = Residual(SwiGLUFFN(embed, embed))  # same structure as reprta; weights restored by load_state_dict
+        self.with_attr = with_attr  # persistent flag saved with checkpoint
+        if with_attr:
+            self._init_attr_branch()
 
     @smart_inference_mode()
     def fuse(self, txt_feats: torch.Tensor = None):
@@ -1096,21 +1106,42 @@ class YOLOEDetect(Detect):
         return None if tpe is None else F.normalize(self.reprta(tpe), dim=-1, p=2)
 
     def _init_attr_branch(self):
-        """Initialize attribute branch by deepcopying from text branch (Phase 2)."""
+        """Initialize attribute branch by deepcopying from text branch (Phase 2).
+
+        This method is idempotent: if cv_attr is already populated (e.g. weights
+        were restored from a checkpoint that had the branch trained) it returns
+        immediately without overwriting the loaded weights.  It also sets
+        self.with_attr = True so the flag survives a round-trip through
+        state_dict / load_state_dict.
+
+        IMPORTANT: Must be called BEFORE fuse().  After fuse(), self.reprta is
+        replaced with nn.Identity() and self.cv3[-1] output channels change from
+        embed to nc, so any deepcopy taken after fuse() would be structurally wrong.
+        """
+        self.with_attr = True  # persist the flag so checkpoints carry it
         if len(self.cv_attr) > 0:
-            return  # Already initialized
-        
+            # Already initialised – weights may have been loaded from a checkpoint.
+            # Do NOT overwrite: the loaded weights are the trained attribute branch
+            # which is intentionally different from the text branch (cv3/reprta).
+            return
+
+        # Guard: reprta must still be the real Residual(SwiGLUFFN), not Identity.
+        # If fuse() has already run, the deepcopy would produce a broken branch.
+        if self.is_fused:
+            raise RuntimeError(
+                "_init_attr_branch() must be called BEFORE fuse(). "
+                "After fuse(), reprta is nn.Identity() and cv3 output channels "
+                "have changed from embed to nc, making a deepcopy structurally incorrect."
+            )
+
         self.cv_attr = copy.deepcopy(self.cv3)
         self.attr_head = copy.deepcopy(self.cv4)
-        self.reprta_attr = copy.deepcopy(self.reprta)
+        self.reprta_attr = copy.deepcopy(self.reprta)  # deepcopy real Residual(SwiGLUFFN), never Identity
 
     def get_attr_pe(self, ape: torch.Tensor | None) -> torch.Tensor | None:
         """Get attribute prompt embeddings with normalization."""
-        if ape is None or self.reprta_attr is None:
+        if ape is None or not self.with_attr:
             return None
-        # print('ape.shape !!!!!!!!!!!!!!',ape.shape[-2])
-        # import sys
-        # sys.exit()
         return F.normalize(self.reprta_attr(ape), dim=-1, p=2)
 
     def get_vpe(self, x: list[torch.Tensor], vpe: torch.Tensor) -> torch.Tensor:
@@ -1241,9 +1272,11 @@ class YOLOEDetect(Detect):
         # 1. 固定属性：ape.shape = [B, na, 512]，所有框共享
         # 2. 动态属性：ape.shape = [B, na, 512]，但在 loss 中使用 box_attr_mask 处理
         if has_attr and len(self.cv_attr) > 0:
-            ape_normalized = self.get_attr_pe(ape)  # [B, na, 512]
+            # ape is already normalized (processed by get_attr_pe before being passed here,
+            # either in preprocess_batch during training or set_attr during inference).
+            # Do NOT call get_attr_pe again – that would double-apply reprta_attr.
             attr_scores = torch.cat(
-                [self.attr_head[i](self.cv_attr[i](x[i]), ape_normalized).reshape(bs, ape.shape[1], -1) for i in range(self.nl)], 
+                [self.attr_head[i](self.cv_attr[i](x[i]), ape).reshape(bs, ape.shape[1], -1) for i in range(self.nl)], 
                 dim=-1
             )
             result['attr_scores'] = attr_scores  # [B, na, n_anc]

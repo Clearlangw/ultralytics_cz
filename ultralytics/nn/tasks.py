@@ -1189,22 +1189,35 @@ class YOLOEModel(DetectionModel):
 
     def add_attr_branch(self, na: int = 0):
         """Add attribute branch to the model (Phase 2).
-        
+
+        Idempotent: safe to call multiple times (e.g. from both an external
+        script and from the trainer's get_model).  If the branch was already
+        initialised – either in __init__ via with_attr=True or by a previous
+        call to this method – the call is a no-op and the loaded weights are
+        preserved.
+
         Args:
             na (int): Unused, kept for API compatibility. Attribute dimension is dynamic.
         """
         head = self.model[-1]
         assert isinstance(head, YOLOEDetect), "Attribute branch only supported for YOLOEDetect"
-        
-        # Ensure attributes exist (for models loaded before this feature was added)
+
+        # Back-compat: old checkpoints may not have these attrs at all
         if not hasattr(head, 'cv_attr'):
             head.cv_attr = nn.ModuleList()
         if not hasattr(head, 'attr_head'):
             head.attr_head = nn.ModuleList()
-        if not hasattr(head, 'reprta_attr'):
-            head.reprta_attr = None
-        
-        head._init_attr_branch()
+        if not hasattr(head, 'with_attr'):
+            head.with_attr = False
+        # reprta_attr was previously allowed to be None; upgrade to a real Module
+        # so that state_dict() exposes its keys and load_state_dict() can restore
+        # trained weights from checkpoints saved with the new design.
+        # We deepcopy reprta (which has the same structure) as a clean initialisation.
+        if not hasattr(head, 'reprta_attr') or head.reprta_attr is None:
+            import copy as _copy
+            head.reprta_attr = _copy.deepcopy(head.reprta)
+
+        head._init_attr_branch()  # idempotent; skips if already populated
 
     def get_cls_pe(self, tpe, vpe):
         """Get class positional embeddings.

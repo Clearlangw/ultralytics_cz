@@ -43,6 +43,9 @@ compile: False # (bool | str) enable torch.compile() backend='inductor'; True="d
 overlap_mask: True # (bool) merge instance masks into one mask during training (segment only)
 mask_ratio: 4 # (int) mask downsample ratio (segment only)
 
+# Attribute branch (YOLOE)
+with_attr: False # (bool) enable attribute branch for YOLOE fine-grained attribute detection
+
 # Classification
 dropout: 0.0 # (float) dropout for classification head (classify only)
 
