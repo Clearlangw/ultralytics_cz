@@ -1159,23 +1159,6 @@ class YOLOEDetect(Detect):
             return self.forward_lrpc(x[:3])
         return super().forward(x)
 
-
-    def forward(
-        self, x: list[torch.Tensor]
-        ) -> dict[str, torch.Tensor] | torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Concatenates and returns predicted bounding boxes and class probabilities."""
-        preds = self.forward_head(x, **self.one2many)
-        if self.end2end:
-            x_detach = [xi.detach() for xi in x]
-            one2one = self.forward_head(x_detach, **self.one2one)
-            preds = {"one2many": preds, "one2one": one2one}
-        if self.training:
-            return preds
-        y = self._inference(preds["one2one"] if self.end2end else preds)
-        if self.end2end:
-            y = self.postprocess(y.permute(0, 2, 1))
-        return y if self.export else (y, preds) #得到tuple，y是result，preds是输出字典
-        
     def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Decode predicted bounding boxes and class probabilities based on multiple-level feature maps.
 
