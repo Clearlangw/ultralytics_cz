@@ -4,7 +4,7 @@ from ultralytics.nn.extend_modules.clip_enhancer import CLIPEnhancer
 from ultralytics.nn.modules.conv import Conv
 from typing import Union, List, Tuple
 
-class CLIPFeatFuser(nn.Module):
+class CLIPFeatAddFuser(nn.Module):
     def __init__(self, channels, clip_size: str, device: torch.device, clip_model=None, clip_image_preprocess=None) -> None:
         super().__init__()
         self.enhancer = CLIPEnhancer(channels, clip_size, device, clip_model, clip_image_preprocess)
@@ -57,7 +57,7 @@ if __name__ == "__main__":
         ]
         image = torch.randn(B, 3, raw_H, raw_W).to(device)
 
-        enhancer = CLIPFeatFuser(channels, size, device).to(device)
+        enhancer = CLIPFeatAddFuser(channels, size, device).to(device)
         outputs = enhancer([image] + feats)
         l = sum([(e**2).sum() for e in outputs])
         l.backward()

@@ -6,6 +6,7 @@ from PIL import Image
 from ultralytics.utils import checks
 from ultralytics.utils.torch_utils import smart_inference_mode
 from typing import Union, List, Tuple
+import types
 try:
     import clip
 except ImportError:
@@ -13,100 +14,7 @@ except ImportError:
     import clip
 from ultralytics.nn.modules import Conv
 
-
-class CLIPVisualExtractor(nn.Module):
-    def __init__(self, size: str, device: torch.device, model=None, image_preprocess=None) -> None:
-        """用于提取 CLIP Vis Enc 的 Spatial 特征，可以用 size 初始化，也可以复用 model/image_preprocess。
-
-        get_spatial_feats 输入图片，获取 CLIP 视觉 Spatial 特征；
-        align_to_sizes 输入 CLIP 视觉 Spatial 特征与 HW 列表，输出空间上 Aligned 特征。
-        """
-        super().__init__()
-        # self.model, self.image_preprocess = clip.load(size, device=device)
-        if (model is not None) and (image_preprocess is not None):
-            self.model, self.image_preprocess = model, image_preprocess
-        else:
-            self.model, self.image_preprocess = clip.load(size, device=device)
-        self.to(device)
-        self.device = device
-        self.eval()
-        self.hook_register()
-        self.input_resolution = self.model.visual.input_resolution
-        self.device = device
-
-    def hook_register(self):
-        self._spatial_hidden = None
-        from clip.model import ModifiedResNet, VisionTransformer
-        if isinstance(self.model.visual, VisionTransformer):
-            def hook(module, input, output):
-                x = output # LND
-                x = x.permute(1, 2, 0)[:, :, 1:] # LND -> NDL
-                N, D, L = x.shape
-                grid = int(L ** 0.5)
-                self._spatial_hidden = x.reshape(N, D, grid, grid) # NDL -> NDHW
-            self.model.visual.transformer.resblocks[-1].register_forward_hook(hook)
-            self.channels = 768
-        elif isinstance(self.model.visual, ModifiedResNet):
-            def hook(module, input, output):
-                self._spatial_hidden = output
-            self.model.visual.layer4[-1].register_forward_hook(hook)
-            self.channels = 2048
-        else:
-            raise NotImplementedError("unacceptable visual extractor type")
-
-    def get_spatial_feats(self, image: Union[Image.Image, torch.Tensor], dtype: torch.dtype = torch.float32, return_cls_token: bool = False) -> torch.Tensor:
-        self._spatial_hidden = None
-        image_device = getattr(image, "device", None) or 'cpu'
-        dtype = getattr(image, "dtype", None) or dtype
-        same_device_image = image.to(self.device) if isinstance(image, torch.Tensor) else image
-        cls_token = self._encode_image(same_device_image, dtype).to(image_device).clone()
-        self._spatial_hidden = self._spatial_hidden.to(dtype).to(image_device).clone()
-        if return_cls_token:
-            return cls_token, self._spatial_hidden
-        else:
-            return self._spatial_hidden
-    
-    def align_to_sizes(self, spatial_feats, sizes):
-        """按 sizes 列表对齐 spatial_feats 到多个尺度."""
-        aligned_feats = []
-        for (h, w) in sizes:
-            # 使用双线性插值
-            aligned_feats.append(
-                torch.nn.functional.interpolate(spatial_feats, size=(h, w), mode='bilinear', align_corners=False).clone()
-            )
-        return aligned_feats
-
-    def _encode_image(self, image: Union[Image.Image, torch.Tensor], dtype: torch.dtype = torch.float32) -> torch.Tensor:
-        """Encode images into normalized feature vectors.
-
-        This method processes image inputs through the CLIP model to generate feature vectors, which are then
-        normalized to unit length. These normalized vectors can be used for text-image similarity comparisons.
-
-        Args:
-            image (PIL.Image | torch.Tensor): Image input as a PIL Image or preprocessed tensor. If a PIL Image is
-                provided, it will be converted to a tensor using the model's image preprocessing function.
-            dtype (torch.dtype, optional): Data type for output features.
-
-        Returns:
-            (torch.Tensor): Normalized image feature vectors with unit length (L2 norm = 1).
-
-        Examples:
-            >>> from ultralytics.nn.text_model import CLIP
-            >>> from PIL import Image
-            >>> clip_model = CLIP("ViT-B/32", device="cuda")
-            >>> image = Image.open("path/to/image.jpg")
-            >>> image_tensor = clip_model.image_preprocess(image).unsqueeze(0).to("cuda")
-            >>> features = clip_model.encode_image(image_tensor)
-            >>> features.shape
-            torch.Size([1, 512])
-        """
-        if isinstance(image, Image.Image):
-            image = self.image_preprocess(image).unsqueeze(0).to(self.device)
-        else:
-            image = F.interpolate(image, size=self.input_resolution, mode='bilinear', align_corners=False)
-        img_feats = self.model.encode_image(image).to(dtype)
-        img_feats = img_feats / img_feats.norm(p=2, dim=-1, keepdim=True)
-        return img_feats
+from ultralytics.nn.extend_modules.clip_visual_extractor import CLIPVisualExtractor
 
 class CLIPEnhancer(nn.Module):
     def __init__(self, channels, clip_size: str, device: torch.device, clip_model=None, clip_image_preprocess=None) -> None:
@@ -133,9 +41,8 @@ class CLIPEnhancer(nn.Module):
     def forward(self, x: List[torch.Tensor]) -> Union[torch.Tensor, Tuple]:
         images = x[0]
         feats = x[1:]
-        with torch.no_grad():
-            clip_feats = self.extractor.get_spatial_feats(images)
-            spatial_aligned_clip_feats = self.extractor.align_to_sizes(clip_feats, [e.shape[-2:] for e in feats])
+        clip_feats = self.extractor.get_spatial_feats(images)
+        spatial_aligned_clip_feats = self.extractor.align_to_sizes(clip_feats, [e.shape[-2:] for e in feats])
         spatial_aligned_clip_feats = [e.clone() for e in spatial_aligned_clip_feats]
         aligned_clip_feats = [
             conv(e)

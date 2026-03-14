@@ -2,9 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ultralytics.nn.extend_modules.clip_feat_add_fuser import CLIPFeatAddFuser
-from ultralytics.nn.extend_modules.clip_feat_xattn_fuser import CLIPFeatXattnFuser
-from ultralytics.nn.extend_modules.clip_feat_film_fuser import CLIPFeatFiLMFuser
 from ultralytics.nn.modules.conv import Conv, DWConv
 from typing import Union, List, Tuple, Dict
 from ultralytics.nn.modules.head import YOLOEDetect, YOLOESegment
@@ -13,73 +10,49 @@ from ultralytics.utils.torch_utils import fuse_conv_and_bn, smart_inference_mode
 from ultralytics.nn.modules.block import BNContrastiveHead, Proto
 from ultralytics.nn.tasks import LRPCHead
 import math
-
-FUSER = {
-    'add': CLIPFeatAddFuser,
-    'xattn': CLIPFeatXattnFuser,
-    'film': CLIPFeatFiLMFuser,
-}
+from ultralytics.nn.extend_modules.clip_visual_extractor import CLIPVisualExtractor
 
 
-class CLIPEnhancedYOLOEDetect(YOLOEDetect):
+class AuxLoss:
+    def __init__(self):
+        self.value = 0.
+
+
+class CLIPDistillYOLOEDetect(YOLOEDetect):
     def __init__(
         self, nc: int = 80, embed: int = 512, with_bn: bool = False, reg_max=16, end2end=False, ch: tuple = (),
-        fuser_type: str='xattn',
         clip_size: str='ViT-B/32', device: torch.device=('cuda' if torch.cuda.is_available() else 'cpu'), clip_model=None, clip_image_preprocess=None,
     ):
         super().__init__(nc, embed, with_bn, reg_max, end2end, ch)
+        self.extractor = CLIPVisualExtractor(clip_size, device, clip_model, clip_image_preprocess)
 
-        self.fuser = FUSER[fuser_type](ch, clip_size, device, clip_model, clip_image_preprocess)
+        self.clip_channels =self.extractor.channels
+        self.proj_to_clip = nn.ModuleList([
+            Conv(c, self.clip_channels, 1, 1)
+            for c in ch
+        ])
 
-    def forward(self, x: List[torch.Tensor]) -> Union[torch.Tensor, Tuple]:
-        """Process features with class prompt embeddings to generate detections."""
-        if hasattr(self, "lrpc"):  # for prompt-free inference
-            return self.forward_lrpc(x[:4])
-            # return self.forward_lrpc(x[:3])
-        return super().forward(x)
+    def forward(self, x):
+        return super().forward(x[1:]), self.aux_loss(x)
+    
+    def aux_loss(self, x):
+        raw_image, x = x[0], x[1:]
+        with torch.no_grad():
+            cls_token, _ = self.extractor.get_spatial_feats(raw_image, dtype=raw_image.dtype, return_cls_token=True) # [B, D]
+            cls_token = cls_token / cls_token.norm(2)
+        feats = [
+            proj(e).mean(dim=[-1, -2]) # [B, C, H, W] -> [B, C]
+            for proj, e in zip(self.proj_to_clip, x)
+        ]
+        feats = [e / e.norm(2) for e in feats]
+        cos_dis = [(e * cls_token).sum(dim=-1) for e in feats] # [B]
+        loss = sum(cos_dis) * 1.0
+        axl = AuxLoss()
+        axl.value = axl.value + loss
+        return axl
 
-    def forward_lrpc(self, x: List[torch.Tensor]) -> Union[torch.Tensor, Tuple]:
-        """Process features with fused text embeddings to generate detections for prompt-free model."""
-        enhanced_x, x = self.fuser(x), x[1:]
-        boxes, scores, index = [], [], []
-        bs = x[0].shape[0]
-        cv2 = self.cv2 if not self.end2end else self.one2one_cv2
-        cv3 = self.cv3 if not self.end2end else self.one2one_cv3
-        for i in range(self.nl):
-            cls_feat = cv3[i](enhanced_x[i])
-            # cls_feat = cv3[i](x[i])
-            loc_feat = cv2[i](x[i])
-            assert isinstance(self.lrpc[i], LRPCHead)
-            box, score, idx = self.lrpc[i](
-                cls_feat,
-                loc_feat,
-                0 if self.export and not self.dynamic else getattr(self, "conf", 0.001),
-            )
-            boxes.append(box.view(bs, self.reg_max * 4, -1))
-            scores.append(score)
-            index.append(idx)
-        preds = dict(boxes=torch.cat(boxes, 2), scores=torch.cat(scores, 2), feats=x, index=torch.cat(index))
-        y = self._inference(preds)
-        if self.end2end:
-            y = self.postprocess(y.permute(0, 2, 1))
-        return y if self.export else (y, preds)
 
-    def forward_head(self, x, box_head, cls_head, contrastive_head):
-        """Concatenates and returns predicted bounding boxes, class probabilities, and contrastive scores."""
-        assert len(x) == 5, f"Expected 5 features including 1 raw image, 3 feature maps and 1 text embeddings, but got {len(x)}."
-        if box_head is None or cls_head is None:  # for fused inference
-            return dict()
-        enhanced_x, x = self.fuser(x[:-1]), x[1:]
-        bs = x[0].shape[0]  # batch size
-        boxes = torch.cat([box_head[i](x[i]).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1)
-        self.nc = x[-1].shape[1]
-        scores = torch.cat(
-            [contrastive_head[i](cls_head[i](enhanced_x[i]), x[-1]).reshape(bs, self.nc, -1) for i in range(self.nl)], dim=-1
-        )
-        self.no = self.nc + self.reg_max * 4  # self.nc could be changed when inference with different texts
-        return dict(boxes=boxes, scores=scores, feats=enhanced_x[:3])
-
-class CLIPEnhancedYOLOESegment(CLIPEnhancedYOLOEDetect):
+class CLIPDistillYOLOESegment(CLIPDistillYOLOEDetect):
     """YOLO segmentation head with text embedding capabilities.
 
     This class extends YOLOEDetect to include mask prediction capabilities for instance segmentation tasks with
@@ -112,7 +85,6 @@ class CLIPEnhancedYOLOESegment(CLIPEnhancedYOLOEDetect):
         reg_max=16,
         end2end=False,
         ch: tuple = (),
-        fuser_type: str='xattn',
         clip_size: str='ViT-B/32', device: torch.device=('cuda' if torch.cuda.is_available() else 'cpu'), clip_model=None, clip_image_preprocess=None,
     ):
         """Initialize YOLOESegment with class count, mask parameters, and embedding dimensions.
@@ -129,7 +101,6 @@ class CLIPEnhancedYOLOESegment(CLIPEnhancedYOLOEDetect):
         """
         super().__init__(nc, embed, with_bn, reg_max, end2end, ch,
             clip_size, device, clip_model, clip_image_preprocess,
-            fuser_type
         )
         self.nm = nm
         self.npr = npr
