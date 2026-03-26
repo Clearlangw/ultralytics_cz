@@ -1015,7 +1015,7 @@ class YOLOEModel(DetectionModel):
         """
         super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
         self.text_model = self.yaml.get("text_model", "mobileclip:blt")
-        
+
     @smart_inference_mode()
     def get_text_pe(self, text, batch=80, cache_clip_model=False, without_reprta=False):
         """Get text positional embeddings using the CLIP model.
@@ -1065,7 +1065,8 @@ class YOLOEModel(DetectionModel):
             (torch.Tensor): Attribute positional embeddings [1, N_attr, 512].
         """
         from ultralytics.nn.text_model import build_text_model
-        # import pdb 
+
+        # import pdb
         # pdb.set_trace()
         device = next(self.model.parameters()).device
         if not getattr(self, "clip_model", None) and cache_clip_model:
@@ -1084,7 +1085,6 @@ class YOLOEModel(DetectionModel):
         head = self.model[-1]
         assert isinstance(head, YOLOEDetect)
         return head.get_attr_pe(attr_feats)  # run attribute text head
-
 
     # def forward(self, x, *args, **kwargs):
     #     """Perform forward pass of the model for either training or inference.
@@ -1192,7 +1192,7 @@ class YOLOEModel(DetectionModel):
 
         Idempotent: safe to call multiple times (e.g. from both an external
         script and from the trainer's get_model).  If the branch was already
-        initialised – either in __init__ via with_attr=True or by a previous
+        initialized – either in __init__ via with_attr=True or by a previous
         call to this method – the call is a no-op and the loaded weights are
         preserved.
 
@@ -1203,18 +1203,19 @@ class YOLOEModel(DetectionModel):
         assert isinstance(head, YOLOEDetect), "Attribute branch only supported for YOLOEDetect"
 
         # Back-compat: old checkpoints may not have these attrs at all
-        if not hasattr(head, 'cv_attr'):
+        if not hasattr(head, "cv_attr"):
             head.cv_attr = nn.ModuleList()
-        if not hasattr(head, 'attr_head'):
+        if not hasattr(head, "attr_head"):
             head.attr_head = nn.ModuleList()
-        if not hasattr(head, 'with_attr'):
+        if not hasattr(head, "with_attr"):
             head.with_attr = False
         # reprta_attr was previously allowed to be None; upgrade to a real Module
         # so that state_dict() exposes its keys and load_state_dict() can restore
         # trained weights from checkpoints saved with the new design.
-        # We deepcopy reprta (which has the same structure) as a clean initialisation.
-        if not hasattr(head, 'reprta_attr') or head.reprta_attr is None:
+        # We deepcopy reprta (which has the same structure) as a clean initialization.
+        if not hasattr(head, "reprta_attr") or head.reprta_attr is None:
             import copy as _copy
+
             head.reprta_attr = _copy.deepcopy(head.reprta)
 
         head._init_attr_branch()  # idempotent; skips if already populated
@@ -1241,7 +1242,16 @@ class YOLOEModel(DetectionModel):
         return torch.cat(all_pe, dim=1)
 
     def predict(
-        self, x, profile=False, visualize=False, tpe=None, augment=False, embed=None, vpe=None, return_vpe=False, ape=None
+        self,
+        x,
+        profile=False,
+        visualize=False,
+        tpe=None,
+        augment=False,
+        embed=None,
+        vpe=None,
+        return_vpe=False,
+        ape=None,
     ):
         """Perform a forward pass through the model.
 
@@ -1278,7 +1288,7 @@ class YOLOEModel(DetectionModel):
                 if cls_pe.shape[0] != b or m.export:
                     cls_pe = cls_pe.expand(b, -1, -1)
                 x.append(cls_pe)  # adding cls embedding
-                
+
                 # Add attribute embeddings if provided (Phase 3)
                 if ape is not None and len(m.cv_attr) > 0:
                     ape_dev = ape.to(device=x[0].device, dtype=x[0].dtype)

@@ -51,15 +51,15 @@ class DetectionPredictor(BasePredictor):
             >>> processed_results = predictor.postprocess(preds, img, orig_imgs)
         """
         save_feats = getattr(self, "_feats", None) is not None
-        
+
         # 获取属性数量：优先从 kwargs，否则从 preds[1] 中获取
-        na = kwargs.get('na', 0)
+        na = kwargs.get("na", 0)
         if na == 0 and isinstance(preds, (list, tuple)) and len(preds) > 1:
             if isinstance(preds[1], dict):
-                na = preds[1].get('na', 0)
-        
-        box_attr_mask = kwargs.pop('box_attr_mask', None)  # 提取属性掩码
-        
+                na = preds[1].get("na", 0)
+
+        box_attr_mask = kwargs.pop("box_attr_mask", None)  # 提取属性掩码
+
         preds = nms.non_max_suppression(
             preds,
             self.args.conf,
@@ -83,7 +83,7 @@ class DetectionPredictor(BasePredictor):
             preds = preds[0]
 
         # 传递 na 到 construct_results
-        kwargs['na'] = na
+        kwargs["na"] = na
         results = self.construct_results(preds, img, orig_imgs, **kwargs)
 
         if save_feats:
@@ -115,7 +115,7 @@ class DetectionPredictor(BasePredictor):
         Returns:
             (list[Results]): List of Results objects containing detection information for each image.
         """
-        na = kwargs.get('na', 0)
+        na = kwargs.get("na", 0)
         return [
             self.construct_result(pred, img, orig_img, img_path, na=na)
             for pred, orig_img, img_path in zip(preds, orig_imgs, self.batch[0])
@@ -135,13 +135,13 @@ class DetectionPredictor(BasePredictor):
             (Results): Results object containing the original image, image path, class names, and scaled bounding boxes.
         """
         pred[:, :4] = ops.scale_boxes(img.shape[2:], pred[:, :4], orig_img.shape)
-        
+
         # Extract attribute scores if present (Phase 3)
         # Format: boxes(4) + scores(1) + class(1) + attr_scores(na) = 6 + na
         attr_scores = None
         if na > 0 and pred.shape[1] > 6:
             # Attribute scores are in positions [6:6+na]
-            attr_scores = pred[:, 6:6+na]
+            attr_scores = pred[:, 6 : 6 + na]
             pred = pred[:, :6]
-        
+
         return Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], attr_scores=attr_scores)

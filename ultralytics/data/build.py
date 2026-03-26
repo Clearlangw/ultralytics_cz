@@ -232,7 +232,6 @@ def build_yolo_dataset(
     multi_modal: bool = False,
 ) -> Dataset:
     """Build and return a YOLO dataset based on configuration parameters."""
-
     dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
     return dataset(
         img_path=img_path,
