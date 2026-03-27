@@ -99,7 +99,7 @@ class YOLOETrainer(DetectionTrainer):
         return build_yolo_dataset(
             self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs, multi_modal=mode == "train"
         )
-        
+
 
 class YOLOEPETrainer(DetectionTrainer):
     """Fine-tune YOLOE model using linear probing approach.
@@ -152,7 +152,7 @@ class YOLOEPETrainer(DetectionTrainer):
         # fuse(), because fuse() replaces cv3's last Conv2d (embed→nc) and
         # _init_attr_branch deepcopies cv3.  Calling after fuse() would give
         # cv_attr the wrong output channels (nc instead of embed).
-        want_attr = getattr(self.args, 'with_attr', False) or getattr(model.model[-1], 'with_attr', False)
+        want_attr = getattr(self.args, "with_attr", False) or getattr(model.model[-1], "with_attr", False)
         if want_attr:
             model.add_attr_branch()  # idempotent – skips if weights already loaded
 
@@ -172,19 +172,19 @@ class YOLOEPETrainer(DetectionTrainer):
 
     def preprocess_batch(self, batch):
         """Preprocess a batch of images for YOLOE training, adjusting formatting and dimensions as needed.
-        
+
         Phase 5: 支持每个框不同的属性列表
         """
         # 调用父类的 preprocess_batch
         batch = DetectionTrainer.preprocess_batch(self, batch)
         # Phase 5: 处理属性（每个框有不同的属性列表）
         # box_attrs 已由 collate_fn 展平为 list[list[str]]，长度 = sum(num_gt per image)
-        if 'box_attrs' in batch and batch['box_attrs']:
-            box_attrs_list = batch['box_attrs']  # list[list[str]]，每个元素是一个框的属性列表
-            
+        if batch.get("box_attrs"):
+            box_attrs_list = batch["box_attrs"]  # list[list[str]]，每个元素是一个框的属性列表
+
             # 收集所有唯一属性
             unique_attrs = list({attr for box_attrs in box_attrs_list for attr in box_attrs})
-            
+
             if unique_attrs:
                 # 计算属性嵌入
                 try:
@@ -193,35 +193,31 @@ class YOLOEPETrainer(DetectionTrainer):
                     # print(attr_pe)
                     # import sys
                     # sys.exit()
-                    batch['attr_pe'] = attr_pe
-                    batch['unique_attrs'] = unique_attrs
-                    
+                    batch["attr_pe"] = attr_pe
+                    batch["unique_attrs"] = unique_attrs
+
                     # 创建属性掩码：[n_boxes, n_unique]
                     # 标记每个框的有效属性
                     box_attr_mask = []
                     for box_attrs in box_attrs_list:
                         mask = [1.0 if attr in box_attrs else 0.0 for attr in unique_attrs]
                         box_attr_mask.append(mask)
-                    
-                    batch['box_attr_mask'] = torch.tensor(
-                        box_attr_mask, 
-                        dtype=torch.float32, 
-                        device=batch['img'].device
+
+                    batch["box_attr_mask"] = torch.tensor(
+                        box_attr_mask, dtype=torch.float32, device=batch["img"].device
                     )
-                    
+
                     if RANK in {-1, 0}:
-                        LOGGER.debug(
-                            f"Batch attributes: {len(unique_attrs)} unique attrs, "
-                            f"{len(box_attrs_list)} boxes"
-                        )
+                        LOGGER.debug(f"Batch attributes: {len(unique_attrs)} unique attrs, {len(box_attrs_list)} boxes")
                 except Exception as e:
                     LOGGER.warning(f"Failed to process attributes: {e}")
                     # 如果属性处理失败，继续训练但不使用属性
-                    batch.pop('box_attrs', None)
-                    batch.pop('attr_pe', None)
-                    batch.pop('box_attr_mask', None)
-        
+                    batch.pop("box_attrs", None)
+                    batch.pop("attr_pe", None)
+                    batch.pop("box_attr_mask", None)
+
         return batch
+
 
 class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
     """Train YOLOE models from scratch with text embedding support.

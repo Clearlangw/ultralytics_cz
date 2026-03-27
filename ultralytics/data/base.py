@@ -120,7 +120,7 @@ class BaseDataset(Dataset):
         # print(self.labels[0])
         # import sys
         # sys.exit()
-        #这里没问题了
+        # 这里没问题了
         self.ni = len(self.labels)  # number of images
         self.rect = rect
         self.batch_size = batch_size
@@ -380,7 +380,7 @@ class BaseDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, Any]:
         """Return transformed label information for given index."""
         label = self.get_image_and_label(index)
-        label = self.transforms(label) #这里也没事啊
+        label = self.transforms(label)  # 这里也没事啊
         return label
 
     def get_image_and_label(self, index: int) -> dict[str, Any]:

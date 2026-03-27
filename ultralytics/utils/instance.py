@@ -220,7 +220,7 @@ class Instances:
         keypoints: np.ndarray = None,
         bbox_format: str = "xywh",
         normalized: bool = True,
-        box_attrs: list = None,
+        box_attrs: list | None = None,
     ) -> None:
         """Initialize the Instances object with bounding boxes, segments, and keypoints.
 
@@ -332,7 +332,15 @@ class Instances:
         """
         segments = self.segments[index] if len(self.segments) else self.segments
         keypoints = self.keypoints[index] if self.keypoints is not None else None
-        box_attrs = [self.box_attrs[i] for i in range(len(self.box_attrs)) if self.box_attrs is not None and (isinstance(index, (int, slice)) or index[i])] if self.box_attrs is not None else None
+        box_attrs = (
+            [
+                self.box_attrs[i]
+                for i in range(len(self.box_attrs))
+                if self.box_attrs is not None and (isinstance(index, (int, slice)) or index[i])
+            ]
+            if self.box_attrs is not None
+            else None
+        )
         bboxes = self.bboxes[index]
         bbox_format = self._bboxes.format
         return Instances(
@@ -483,7 +491,7 @@ class Instances:
         else:
             cat_segments = np.concatenate([b.segments for b in instances_list], axis=axis)
         cat_keypoints = np.concatenate([b.keypoints for b in instances_list], axis=axis) if use_keypoint else None
-        
+
         # Concatenate box_attrs
         cat_box_attrs = None
         if any(ins.box_attrs is not None for ins in instances_list):
@@ -491,7 +499,7 @@ class Instances:
             for ins in instances_list:
                 if ins.box_attrs is not None:
                     cat_box_attrs.extend(ins.box_attrs)
-        
+
         return cls(cat_boxes, cat_segments, cat_keypoints, bbox_format, normalized, cat_box_attrs)
 
     @property
