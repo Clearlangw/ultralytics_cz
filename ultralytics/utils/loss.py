@@ -444,7 +444,7 @@ class v8DetectionLoss:
         # Phase 4: 计算属性 BCE 损失
         attr_loss = self._compute_attr_loss(preds, batch, fg_mask, target_gt_idx, batch_size)
         if attr_loss is not None:
-            loss[1] = loss[1] + attr_loss * self.hyp.get('attr_loss_gain', 0.5)
+            loss[1] = loss[1] + attr_loss * self.hyp.get("attr_loss_gain", 0.5)
         return (
             (fg_mask, target_gt_idx, target_bboxes, anchor_points, stride_tensor),
             loss,
@@ -471,7 +471,6 @@ class v8DetectionLoss:
         loss, loss_detach = self.get_assigned_targets_and_loss(preds, batch)[1:]
         return loss * batch_size, loss_detach
 
-
     def _compute_attr_loss(
         self,
         preds: dict[str, torch.Tensor],
@@ -488,8 +487,7 @@ class v8DetectionLoss:
 
         Args:
             preds: Model predictions, must contain 'attr_scores' [B, na, n_anc].
-            batch: Batch dict, must contain 'box_attr_mask' [n_total_boxes, na]
-                   and 'batch_idx' [n_total_boxes].
+            batch: Batch dict, must contain 'box_attr_mask' [n_total_boxes, na] and 'batch_idx' [n_total_boxes].
             fg_mask: Boolean mask [B, n_anc], True for foreground anchors.
             target_gt_idx: Long tensor [B, n_anc], per-image GT index for each anchor.
             batch_size: Number of images in the batch (B).
@@ -497,17 +495,17 @@ class v8DetectionLoss:
         Returns:
             Scalar attribute loss tensor, or None if attributes are absent.
         """
-        if 'attr_scores' not in preds or 'box_attr_mask' not in batch:
+        if "attr_scores" not in preds or "box_attr_mask" not in batch:
             return None
 
-        attr_scores = preds['attr_scores']   # [B, na, n_anc]
-        box_attr_mask = batch['box_attr_mask'].to(attr_scores.device).float()  # [n_total_boxes, na]
-        batch_idx = batch['batch_idx'].to(attr_scores.device).long()           # [n_total_boxes]
+        attr_scores = preds["attr_scores"]  # [B, na, n_anc]
+        box_attr_mask = batch["box_attr_mask"].to(attr_scores.device).float()  # [n_total_boxes, na]
+        batch_idx = batch["batch_idx"].to(attr_scores.device).long()  # [n_total_boxes]
 
         if not fg_mask.any():
             return None
 
-        B, na, n_anc = attr_scores.shape
+        _B, _na, _n_anc = attr_scores.shape
 
         # attr_scores: [B, na, n_anc] -> [B, n_anc, na]
         attr_scores_t = attr_scores.permute(0, 2, 1)  # [B, n_anc, na]
@@ -526,26 +524,24 @@ class v8DetectionLoss:
         fg_scores_list = []
         fg_targets_list = []
         for b in range(batch_size):
-            fg_b = fg_mask[b]                          # [n_anc], bool
+            fg_b = fg_mask[b]  # [n_anc], bool
             if not fg_b.any():
                 continue
-            gt_idx_b = target_gt_idx[b][fg_b]         # [n_fg], within-image GT idx
-            global_idx = gt_offsets[b] + gt_idx_b     # [n_fg], global row in box_attr_mask
-            fg_scores_list.append(attr_scores_t[b][fg_b])          # [n_fg, na]
-            fg_targets_list.append(box_attr_mask[global_idx])       # [n_fg, na]
+            gt_idx_b = target_gt_idx[b][fg_b]  # [n_fg], within-image GT idx
+            global_idx = gt_offsets[b] + gt_idx_b  # [n_fg], global row in box_attr_mask
+            fg_scores_list.append(attr_scores_t[b][fg_b])  # [n_fg, na]
+            fg_targets_list.append(box_attr_mask[global_idx])  # [n_fg, na]
 
         if not fg_scores_list:
             return None
 
-        fg_scores = torch.cat(fg_scores_list, dim=0)   # [N_fg, na]
-        fg_targets = torch.cat(fg_targets_list, dim=0) # [N_fg, na]
+        fg_scores = torch.cat(fg_scores_list, dim=0)  # [N_fg, na]
+        fg_targets = torch.cat(fg_targets_list, dim=0)  # [N_fg, na]
 
-        bce_loss = F.binary_cross_entropy_with_logits(fg_scores, fg_targets, reduction='none')
+        bce_loss = F.binary_cross_entropy_with_logits(fg_scores, fg_targets, reduction="none")
 
         # Down-weight negatives to handle class imbalance
-        weights = torch.where(fg_targets > 0.5,
-                              torch.ones_like(fg_targets),
-                              torch.full_like(fg_targets, 0.1))
+        weights = torch.where(fg_targets > 0.5, torch.ones_like(fg_targets), torch.full_like(fg_targets, 0.1))
         loss = (bce_loss * weights).sum() / (weights.sum() + 1e-6)
         return loss
 
@@ -1288,70 +1284,63 @@ class TVPDetectLoss:
         preds["scores"] = self._get_vp_features(preds)
         vp_loss = self.vp_criterion(preds, batch)
         box_loss = vp_loss[0][1]
-        
+
         # Phase 4: 计算属性 BCE 损失
         attr_loss = self._compute_attr_loss(preds, batch)
 
         if attr_loss is not None:
             # 将属性损失添加到总损失中
-            box_loss = box_loss + attr_loss * self.hyp.get('attr_loss_gain', 0.5)
-        
+            box_loss = box_loss + attr_loss * self.hyp.get("attr_loss_gain", 0.5)
+
         return box_loss, vp_loss[1]
 
     def _compute_attr_loss(self, preds: dict[str, torch.Tensor], batch: dict[str, torch.Tensor]) -> torch.Tensor | None:
         """Compute attribute BCE loss (Phase 4).
-        
+
         Args:
             preds: Model predictions containing attr_scores
             batch: Batch data containing box_attr_mask and unique_attrs
-            
+
         Returns:
             Attribute loss tensor or None if no attributes
         """
         # 检查是否有属性信息
-        if 'attr_scores' not in preds or 'box_attr_mask' not in batch:
+        if "attr_scores" not in preds or "box_attr_mask" not in batch:
             return None
-        
-        attr_scores = preds['attr_scores']  # [B, na, n_anc]
-        box_attr_mask = batch['box_attr_mask']  # [n_boxes, na]
-        
+
+        attr_scores = preds["attr_scores"]  # [B, na, n_anc]
+        box_attr_mask = batch["box_attr_mask"]  # [n_boxes, na]
+
         if attr_scores is None or box_attr_mask is None:
             return None
-        
+
         # attr_scores 的形状：[B, na, n_anc]
         # 需要转换为 [B*n_anc, na] 用于损失计算
-        B, na, n_anc = attr_scores.shape
+        _B, na, _n_anc = attr_scores.shape
         attr_scores_flat = attr_scores.permute(0, 2, 1).reshape(-1, na)  # [B*n_anc, na]
-        
+
         # box_attr_mask 的形状：[n_boxes, na]
         # 需要展平为 [B*n_anc, na]
         box_attr_mask_flat = box_attr_mask.to(attr_scores.device)
-        
+
         # 创建属性目标（multi-hot）
         # 对于每个 anchor，如果对应的框有该属性，则目标为 1，否则为 0
         # 这里我们使用 box_attr_mask 作为目标
         attr_target = box_attr_mask_flat.float()
-        
+
         # 计算 BCE 损失
         import torch.nn.functional as F
-        bce_loss = F.binary_cross_entropy_with_logits(
-            attr_scores_flat, 
-            attr_target, 
-            reduction='none'
-        )
-        
+
+        bce_loss = F.binary_cross_entropy_with_logits(attr_scores_flat, attr_target, reduction="none")
+
         # 应用掩码：只计算有效属性的损失
         # 正样本权重 1.0，负样本权重 0.1（处理类别不平衡）
-        weights = torch.where(
-            attr_target > 0.5,
-            torch.ones_like(attr_target),
-            torch.ones_like(attr_target) * 0.1
-        )
+        weights = torch.where(attr_target > 0.5, torch.ones_like(attr_target), torch.ones_like(attr_target) * 0.1)
         weighted_loss = bce_loss * weights
-        
+
         # 计算平均损失
         loss = weighted_loss.sum() / (weights.sum() + 1e-6)
-        
+
         return loss
 
     def _get_vp_features(self, preds: dict[str, torch.Tensor]) -> list[torch.Tensor]:
