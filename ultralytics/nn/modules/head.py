@@ -141,7 +141,7 @@ class Detect(nn.Module):
         bs = x[0].shape[0]  # batch size
         boxes = torch.cat([box_head[i](x[i]).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1)
         scores = torch.cat([cls_head[i](x[i]).view(bs, self.nc, -1) for i in range(self.nl)], dim=-1)
-        return dict(boxes=boxes, scores=scores, feats=x) #输出字典
+        return dict(boxes=boxes, scores=scores, feats=x)  # 输出字典
 
     def forward(
         self, x: list[torch.Tensor]
@@ -157,7 +157,7 @@ class Detect(nn.Module):
         y = self._inference(preds["one2one"] if self.end2end else preds)
         if self.end2end:
             y = self.postprocess(y.permute(0, 2, 1))
-        return y if self.export else (y, preds) #得到tuple，y是result，preds是输出字典
+        return y if self.export else (y, preds)  # 得到tuple，y是result，preds是输出字典
 
     def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         """Decode predicted bounding boxes and class probabilities based on multiple-level feature maps.
@@ -994,7 +994,14 @@ class YOLOEDetect(Detect):
     is_fused = False
 
     def __init__(
-        self, nc: int = 80, embed: int = 512, with_bn: bool = False, reg_max=16, end2end=False, ch: tuple = (), with_attr: bool = False
+        self,
+        nc: int = 80,
+        embed: int = 512,
+        with_bn: bool = False,
+        reg_max=16,
+        end2end=False,
+        ch: tuple = (),
+        with_attr: bool = False,
     ):
         """Initialize YOLO detection layer with nc classes and layer channels ch.
 
@@ -1041,7 +1048,9 @@ class YOLOEDetect(Detect):
         # (weights loaded from checkpoint), it skips and does NOT overwrite.
         self.cv_attr = nn.ModuleList()  # attribute visual feature extraction (empty = branch inactive)
         self.attr_head = nn.ModuleList()  # attribute contrastive head
-        self.reprta_attr = Residual(SwiGLUFFN(embed, embed))  # same structure as reprta; weights restored by load_state_dict
+        self.reprta_attr = Residual(
+            SwiGLUFFN(embed, embed)
+        )  # same structure as reprta; weights restored by load_state_dict
         self.with_attr = with_attr  # persistent flag saved with checkpoint
         if with_attr:
             self._init_attr_branch()
@@ -1120,7 +1129,7 @@ class YOLOEDetect(Detect):
         """
         self.with_attr = True  # persist the flag so checkpoints carry it
         if len(self.cv_attr) > 0:
-            # Already initialised – weights may have been loaded from a checkpoint.
+            # Already initialized – weights may have been loaded from a checkpoint.
             # Do NOT overwrite: the loaded weights are the trained attribute branch
             # which is intentionally different from the text branch (cv3/reprta).
             return
@@ -1219,14 +1228,14 @@ class YOLOEDetect(Detect):
 
     def forward_head(self, x, box_head, cls_head, contrastive_head):
         """Concatenates and returns predicted bounding boxes, class probabilities, and contrastive scores.
-        
+
         支持两种属性模式：
         1. 固定属性（推理时）：所有框共享同一个属性列表
         2. 动态属性（训练时）：每个框有不同的属性列表
         """
         # Support both standard (4 inputs) and extended (5 inputs with attribute embeddings) modes
         has_attr = len(x) == 5
-        
+
         # print("has_attr is",has_attr)
         # import sys
         # sys.exit()
@@ -1236,10 +1245,10 @@ class YOLOEDetect(Detect):
             x = x[:-1]  # remove ape from x for standard processing
         else:
             assert len(x) == 4, f"Expected 4 features including 3 feature maps and 1 text embeddings, but got {len(x)}."
-        
+
         if box_head is None or cls_head is None:  # for fused inference
             return dict()
-        
+
         bs = x[0].shape[0]  # batch size
         boxes = torch.cat([box_head[i](x[i]).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1)
         self.nc = x[-1].shape[1]
@@ -1247,9 +1256,9 @@ class YOLOEDetect(Detect):
             [contrastive_head[i](cls_head[i](x[i]), x[-1]).reshape(bs, self.nc, -1) for i in range(self.nl)], dim=-1
         )
         self.no = self.nc + self.reg_max * 4  # self.nc could be changed when inference with different texts
-        
+
         result = dict(boxes=boxes, scores=scores, feats=x[:3])
-        
+
         # Process attribute branch if enabled (Phase 2)
         # 支持两种模式：
         # 1. 固定属性：ape.shape = [B, na, 512]，所有框共享
@@ -1259,13 +1268,12 @@ class YOLOEDetect(Detect):
             # either in preprocess_batch during training or set_attr during inference).
             # Do NOT call get_attr_pe again – that would double-apply reprta_attr.
             attr_scores = torch.cat(
-                [self.attr_head[i](self.cv_attr[i](x[i]), ape).reshape(bs, ape.shape[1], -1) for i in range(self.nl)], 
-                dim=-1
+                [self.attr_head[i](self.cv_attr[i](x[i]), ape).reshape(bs, ape.shape[1], -1) for i in range(self.nl)],
+                dim=-1,
             )
-            result['attr_scores'] = attr_scores  # [B, na, n_anc]
-            result['na'] = ape.shape[1]  # 属性数量
+            result["attr_scores"] = attr_scores  # [B, na, n_anc]
+            result["na"] = ape.shape[1]  # 属性数量
         return result
-
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
