@@ -178,7 +178,7 @@ class YOLODataset(BaseDataset):
             assert cache["hash"] == get_hash(self.label_files + self.im_files)  # identical hash
         except (FileNotFoundError, AssertionError, AttributeError, ModuleNotFoundError):
             cache, exists = self.cache_labels(cache_path), False  # run cache ops
-            
+
         # Display cache
         nf, nm, ne, nc, n = cache.pop("results")  # found, missing, empty, corrupt, total
         if exists and LOCAL_RANK in {-1, 0}:
@@ -287,7 +287,9 @@ class YOLODataset(BaseDataset):
             segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
         else:
             segments = np.zeros((0, segment_resamples, 2), dtype=np.float32)
-        label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized, box_attrs=box_attrs)
+        label["instances"] = Instances(
+            bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized, box_attrs=box_attrs
+        )
         # Phase 1: 保留 box_attrs 作为顶层字段，便于直接访问
         if box_attrs is not None:
             label["box_attrs"] = box_attrs
@@ -383,7 +385,7 @@ class YOLOMultiModalDataset(YOLODataset):
         # NOTE: some categories are concatenated with its synonyms by `/`.
         # NOTE: and `RandomLoadText` would randomly select one of them if there are multiple words.
         labels["texts"] = [v.split("/") for _, v in self.data["names"].items()]
-        
+
         # Phase 1: 保留 box_attrs 字段（如果存在）
         if "box_attrs" in label:
             labels["box_attrs"] = label["box_attrs"]
