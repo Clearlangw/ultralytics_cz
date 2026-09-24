@@ -217,12 +217,13 @@ def verify_image_label(args: tuple) -> list:
             nf = 1  # label found
             with open(lb_file, encoding="utf-8") as f:
                 lb_lines = [x for x in f.read().strip().splitlines() if len(x)]
-                
+
                 # Phase 1: 提取属性和数值部分
                 import re
+
                 box_attrs = []  # list[list[str]]，每个元素对应一个 box 的属性列表
                 lb_numeric = []  # 数值部分
-                
+
                 for line in lb_lines:
                     # 查找第一个单引号位置
                     quote_pos = line.find("'")
@@ -238,9 +239,9 @@ def verify_image_label(args: tuple) -> list:
                         # 用正则提取所有单引号内的属性
                         attrs = re.findall(r"'([^']+)'", attr_part)
                         box_attrs.append(attrs)
-                
+
                 lb = [x.split() for x in lb_numeric if len(x)]
-                
+
                 if any(len(x) > 6 for x in lb) and (not keypoint):  # is segment
                     classes = np.array([x[0] for x in lb], dtype=np.float32)
                     segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
