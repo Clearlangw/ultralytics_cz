@@ -313,7 +313,7 @@ class YOLOE(Model):
         # Verify no background class is present
         assert " " not in classes
         assert isinstance(self.model, YOLOEModel)
-        if sorted(list(self.model.names.values())) != sorted(classes):
+        if sorted(self.model.names.values()) != sorted(classes):
             if embeddings is None:
                 embeddings = self.get_text_pe(classes)  # generate text embeddings if not provided
             self.model.set_classes(classes, embeddings)
@@ -324,10 +324,10 @@ class YOLOE(Model):
 
     def add_attr_branch(self) -> None:
         """Add attribute branch to the YOLOE model for fine-grained attribute detection (Phase 2).
-        
+
         This method initializes the attribute branch by deepcopying the text branch components.
         Must be called before setting attributes with set_attr().
-        
+
         Examples:
             >>> model = YOLOE("yoloe-11s-seg.pt")
             >>> model.add_attr_branch()
@@ -338,13 +338,13 @@ class YOLOE(Model):
 
     def set_attr(self, attrs: list[str]) -> None:
         """Set attribute names and embeddings for fine-grained detection (Phase 2-3).
-        
+
         This method configures the attributes used for fine-grained object detection.
         Must call add_attr_branch() first.
-        
+
         Args:
             attrs (list[str]): List of attribute names i.e. ["red", "moving", "large"].
-        
+
         Examples:
             >>> model = YOLOE("yoloe-11s-seg.pt")
             >>> model.add_attr_branch()
@@ -388,7 +388,7 @@ class YOLOE(Model):
         self,
         source=None,
         stream: bool = False,
-        visual_prompts: dict[str, list] = {},
+        visual_prompts: dict[str, list] | None = None,
         refer_image=None,
         predictor=yolo.yoloe.YOLOEVPDetectPredictor,
         **kwargs,
@@ -417,6 +417,8 @@ class YOLOE(Model):
             >>> prompts = {"bboxes": [[10, 20, 100, 200]], "cls": ["person"]}
             >>> results = model.predict("path/to/image.jpg", visual_prompts=prompts)
         """
+        if visual_prompts is None:
+            visual_prompts = {}
         if len(visual_prompts):
             assert "bboxes" in visual_prompts and "cls" in visual_prompts, (
                 f"Expected 'bboxes' and 'cls' in visual prompts, but got {visual_prompts.keys()}"
@@ -465,18 +467,18 @@ class YOLOE(Model):
         self.overrides["agnostic_nms"] = True  # use agnostic nms for YOLOE default
 
         # Store attribute embeddings in model if set (Phase 3)
-        if hasattr(self, 'attr_pe') and self.attr_pe is not None:
+        if hasattr(self, "attr_pe") and self.attr_pe is not None:
             # Store in both places for compatibility
             self.model._attr_pe = self.attr_pe
-            if hasattr(self.model, 'model'):
+            if hasattr(self.model, "model"):
                 self.model.model._attr_pe = self.attr_pe
 
         results = super().predict(source, stream, **kwargs)
-        
+
         # Also set in predictor if it was created
-        if hasattr(self, 'attr_pe') and self.attr_pe is not None and self.predictor is not None:
+        if hasattr(self, "attr_pe") and self.attr_pe is not None and self.predictor is not None:
             self.predictor.model._attr_pe = self.attr_pe
-            if hasattr(self.predictor.model, 'model'):
+            if hasattr(self.predictor.model, "model"):
                 self.predictor.model.model._attr_pe = self.attr_pe
-        
+
         return results
