@@ -232,7 +232,6 @@ def build_yolo_dataset(
     multi_modal: bool = False,
 ) -> Dataset:
     """Build and return a YOLO dataset based on configuration parameters."""
-
     dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
     return dataset(
         img_path=img_path,
@@ -434,6 +433,6 @@ def load_inference_source(
         dataset = LoadImagesAndVideos(source, batch=batch, vid_stride=vid_stride, channels=channels)
 
     # Attach source types to the dataset
-    setattr(dataset, "source_type", source_type)
+    dataset.source_type = source_type
 
     return dataset

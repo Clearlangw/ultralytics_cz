@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 from ultralytics.data import build_dataloader, build_yolo_dataset
 from ultralytics.engine.trainer import BaseTrainer
@@ -19,7 +19,7 @@ from ultralytics.utils import DEFAULT_CFG, LOGGER, RANK
 from ultralytics.utils.patches import override_configs
 from ultralytics.utils.plotting import plot_images, plot_labels
 from ultralytics.utils.torch_utils import torch_distributed_zero_first, unwrap_model
-from ultralytics.data.dataset import YOLODataset
+
 
 class DetectionTrainer(BaseTrainer):
     """A class extending the BaseTrainer class for training based on a detection model.
@@ -114,7 +114,7 @@ class DetectionTrainer(BaseTrainer):
             (dict): Preprocessed batch with normalized images.
         """
         for k, v in batch.items():
-            #print(v)
+            # print(v)
             if isinstance(v, torch.Tensor):
                 batch[k] = v.to(self.device, non_blocking=self.device.type == "cuda")
         batch["img"] = batch["img"].float() / 255
@@ -146,7 +146,7 @@ class DetectionTrainer(BaseTrainer):
         self.model.nc = self.data["nc"]  # attach number of classes to model
         self.model.names = self.data["names"]  # attach class names to model
         self.model.args = self.args  # attach hyperparameters to model
-        if getattr(self.model, "end2end"):
+        if self.model.end2end:
             self.model.set_head_attr(max_det=self.args.max_det)
         # TODO: self.model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc
 
