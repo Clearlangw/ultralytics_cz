@@ -64,11 +64,10 @@ class SegmentationPredictor(DetectionPredictor):
         protos = preds[0][1] if isinstance(preds[0], tuple) else preds[1]
         # 新增：提取属性分数和属性数量
         preds_dict = preds[1] if isinstance(preds[0], tuple) else preds[0]
-        #attr_scores = preds_dict.get('attr_scores', None)  # shape: (batch, na, num_boxes)
-        na = preds_dict.get('na', 0)  # 属性数量
+        # attr_scores = preds_dict.get('attr_scores', None)  # shape: (batch, na, num_boxes)
+        na = preds_dict.get("na", 0)  # 属性数量
         # 调用父类 postprocess，并传入属性信息
         return super().postprocess(preds[0], img, orig_imgs, protos=protos, na=na)
-
 
     def construct_results(self, preds, img, orig_imgs, protos, na=0):
         """Construct a list of result objects from the predictions.
@@ -106,17 +105,18 @@ class SegmentationPredictor(DetectionPredictor):
         # Extract attribute scores if present (Phase 3)
         # NMS 输出格式：boxes(4) + scores(1) + class(1) + attr_scores(na) + mask_coeff(nm)
         attr_scores = None
-        nm = proto.shape[1] if proto is not None else 0
+        proto.shape[1] if proto is not None else 0
         # print(pred)
         # import
         if pred.shape[0] > 0 and na > 0:
             # 属性分数在位置 [6:6+na]
-            attr_scores = pred[:, 6:6+na]
+            attr_scores = pred[:, 6 : 6 + na]
             # 重新组织 pred：只保留 boxes + scores + class + mask_coeff
             # 需要将 mask_coeff 从 [6+na:] 移到 [6:]
             import torch
-            pred = torch.cat([pred[:, :6], pred[:, 6+na:]], dim=1)
-        
+
+            pred = torch.cat([pred[:, :6], pred[:, 6 + na :]], dim=1)
+
         if pred.shape[0] == 0:  # save empty boxes
             masks = None
         elif self.args.retina_masks:
@@ -131,4 +131,6 @@ class SegmentationPredictor(DetectionPredictor):
                 pred, masks = pred[keep], masks[keep]  # indexing is slow
                 if attr_scores is not None:
                     attr_scores = attr_scores[keep]
-        return Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], masks=masks, attr_scores=attr_scores)
+        return Results(
+            orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], masks=masks, attr_scores=attr_scores
+        )
