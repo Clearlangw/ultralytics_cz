@@ -754,23 +754,23 @@ class Results(SimpleClass, DataExportMixin):
 
     def describe(self, attrs: list[str], attr_thres: float = 0.4) -> list[str]:
         """Generate attribute descriptions for detections (Phase 3).
-        
+
         Args:
             attrs (list[str]): List of attribute names.
             attr_thres (float): Threshold for attribute scores to be included in description.
-        
+
         Returns:
             (list[str]): List of attribute descriptions for each detection.
         """
         if self.attr_scores is None:
             return []
-        
+
         descriptions = []
         for i in range(len(self.attr_scores)):
             attr_score = self.attr_scores[i]  # [N_attr]
             active_attrs = [attrs[j] for j in range(len(attrs)) if attr_score[j] > attr_thres]
             descriptions.append(" ".join(active_attrs) if active_attrs else "")
-        
+
         return descriptions
 
     def summary(self, normalize: bool = False, decimals: int = 5) -> list[dict[str, Any]]:
